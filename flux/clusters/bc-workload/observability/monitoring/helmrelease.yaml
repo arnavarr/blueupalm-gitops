@@ -1,0 +1,257 @@
+# flux/clusters/bc-workload/observability/monitoring/helmrelease.yaml
+# BlueUPALM — Prometheus + Grafana + Loki + AlertManager
+#
+# Métricas críticas monitorizadas:
+#   - NATS JetStream: lag en VERIFY_STREAM, estado del cluster
+#   - DORA SLA Timers: buffer de ingestión (warning 300s, crítico 7200s)
+#   - Circuit Breaker: estado del breaker de ingestion-agent
+#   - Biscuit tokens: tasa emisión/revocación/denegación
+#
+# Alertas predefinidas (AlertManager):
+#   - DORACriticalIncident: buffer > 2h → CSIRT
+#   - NATSClusterDegraded: réplicas < 3
+#   - BiscuitRootKeyExpiring: rotación < 7 días
+#   - TokenRevocationSpike: > 10 revocaciones/min
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: prometheus-community
+  namespace: observability
+spec:
+  interval: 24h
+  url: https://prometheus-community.github.io/helm-charts
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: observability
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: "58.*"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: observability
+
+  values:
+    # ── Grafana ───────────────────────────────────────────────────────────
+    grafana:
+      adminPassword: "changeme-grafana"    # En producción: ExternalSecret
+      # Autenticación via Dex → Keycloak
+      grafana.ini:
+        auth.generic_oauth:
+          enabled: true
+          name: "BlueUPALM SSO"
+          client_id: "grafana"
+          scopes: "openid email profile groups"
+          auth_url: "https://auth.navarro-bores.com/auth/realms/blueupalm/protocol/openid-connect/auth"
+          token_url: "https://auth.navarro-bores.com/auth/realms/blueupalm/protocol/openid-connect/token"
+          role_attribute_path: "contains(groups[*], 'admin') && 'Admin' || 'Viewer'"
+
+      # Dashboards incluidos
+      dashboardProviders:
+        dashboardproviders.yaml:
+          apiVersion: 1
+          providers:
+            - name: blueupalm
+              orgId: 1
+              folder: BlueUPALM
+              type: file
+              options:
+                path: /var/lib/grafana/dashboards/blueupalm
+
+      dashboardsConfigMaps:
+        blueupalm: "grafana-dashboards-blueupalm"
+
+      persistence:
+        enabled: true
+        storageClassName: standard-rwo
+        size: 5Gi
+
+    # ── Prometheus ────────────────────────────────────────────────────────
+    prometheus:
+      prometheusSpec:
+        retention: 90d    # 90 días (Loki archiva el resto)
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: standard-rwo
+              resources:
+                requests:
+                  storage: 50Gi
+        # Scrapear ServiceMonitors de todos los namespaces
+        serviceMonitorSelectorNilUsesHelmValues: false
+        serviceMonitorNamespaceSelector:
+          matchLabels: {}
+        ruleNamespaceSelector:
+          matchLabels: {}
+
+    # ── AlertManager ─────────────────────────────────────────────────────
+    alertmanager:
+      alertmanagerSpec:
+        storage:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: standard-rwo
+              resources:
+                requests:
+                  storage: 2Gi
+
+---
+# ── PrometheusRules: Alertas críticas BlueUPALM ──────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: blueupalm-critical-alerts
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: blueupalm.dora
+      interval: 30s
+      rules:
+        # ── DORA: Incidente Crítico (buffer ingestión > 2 horas) ──────────
+        - alert: DORACriticalIncident
+          expr: |
+            blueupalm_ingestion_buffer_age_seconds > 7200
+          for: 1m
+          labels:
+            severity: critical
+            compliance: dora
+            team: csirt
+          annotations:
+            summary: "DORA Critical Incident: ingestion buffer > 2h"
+            description: |
+              El buffer de ingestión lleva {{ $value | humanizeDuration }} sin procesarse.
+              Supera el umbral DORA de 7200s (Art. 17 Reglamento DORA 2022/2554).
+              Acción inmediata requerida — notificar al CSIRT.
+            runbook: "https://wiki.blueupalm/runbooks/dora-critical-incident"
+
+        # ── DORA Warning (buffer > 5 minutos) ────────────────────────────
+        - alert: DORASLAWarning
+          expr: |
+            blueupalm_ingestion_buffer_age_seconds > 300
+          for: 2m
+          labels:
+            severity: warning
+            compliance: dora
+          annotations:
+            summary: "DORA Warning: ingestion buffer > 5min"
+            description: |
+              Buffer de ingestión: {{ $value | humanizeDuration }}.
+              Umbral warning: 300s. Investigar conectividad NATS.
+
+    - name: blueupalm.nats
+      rules:
+        # ── NATS: Cluster degradado (< 3 réplicas) ───────────────────────
+        - alert: NATSClusterDegraded
+          expr: |
+            nats_server_total_connections == 0
+            OR
+            count(up{job="nats"}) < 3
+          for: 2m
+          labels:
+            severity: critical
+            compliance: dora
+          annotations:
+            summary: "NATS Cluster degradado: {{ $value }} réplicas activas"
+            description: |
+              El cluster NATS tiene menos de 3 réplicas saludables.
+              DORA compliance: riesgo de pérdida de eventos de verificación.
+
+    - name: blueupalm.security
+      rules:
+        # ── Biscuit: Clave raíz expirando pronto ─────────────────────────
+        - alert: BiscuitRootKeyExpiring
+          expr: |
+            blueupalm_biscuit_root_key_days_until_rotation < 7
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Biscuit root key expira en {{ $value }} días"
+            description: |
+              La clave raíz PKCS#8 de Biscuit expira en {{ $value }} días.
+              Iniciar proceso de rotación (ver External Secrets annotation: rotation.policy=90d).
+
+        # ── Token Revocation Spike ────────────────────────────────────────
+        - alert: TokenRevocationSpike
+          expr: |
+            rate(blueupalm_token_revocations_total[1m]) > 10
+          for: 30s
+          labels:
+            severity: warning
+          annotations:
+            summary: "Spike de revocaciones de tokens: {{ $value }}/min"
+            description: |
+              Tasa de revocación de tokens Biscuit superior a 10/min.
+              Posible incidente de seguridad — revisar logs de edge-security.
+
+---
+# ── Loki: agregación de logs ──────────────────────────────────────────────────
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: grafana-charts
+  namespace: observability
+spec:
+  interval: 24h
+  url: https://grafana.github.io/helm-charts
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: loki-stack
+  namespace: observability
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: loki-stack
+      version: "2.10.*"
+      sourceRef:
+        kind: HelmRepository
+        name: grafana-charts
+        namespace: observability
+
+  values:
+    loki:
+      persistence:
+        enabled: true
+        storageClassName: standard-rwo
+        size: 50Gi
+      config:
+        limits_config:
+          retention_period: 2160h    # 90 días en Loki
+        # Archivado en Ceph S3 Bronze para largo plazo
+        storage_config:
+          aws:
+            s3: "http://rook-ceph-rgw-blueupalm-s3.rook-ceph.svc.cluster.local"
+            bucketnames: "blueupalm-bronze"
+            region: eu-west-1
+
+    promtail:
+      config:
+        snippets:
+          # Extraer etiquetas de logs para multi-tenancy y auditoría
+          pipelineStages:
+            - docker: {}
+            - json:
+                expressions:
+                  app: app
+                  entity_id: entity_id    # Multi-tenancy por entidad bancaria
+                  domain: domain          # banking/insurance
+                  level: level
+            - labels:
+                app:
+                entity_id:
+                domain:

@@ -1,0 +1,37 @@
+# terraform/terraform.tfvars.example
+# BlueUPALM Platform — Variables de configuración
+#
+# INSTRUCCIONES:
+#   cp terraform.tfvars.example terraform.tfvars
+#   Editar terraform.tfvars con los valores reales
+#   NUNCA hacer commit de terraform.tfvars (está en .gitignore)
+
+# ── GCP ───────────────────────────────────────────────────────────────────────
+gcp_project_id = "blueup-bc-demo"      # Reemplazar con tu Project ID
+gcp_region     = "europe-west1"         # Soberanía de datos UE (GDPR/DORA)
+gcp_zone       = "europe-west1-b"
+
+# ── Cluster ───────────────────────────────────────────────────────────────────
+workload_cluster_name      = "bc-workload"
+k8s_version                = "v1.29.0"
+control_plane_machine_type = "e2-standard-4"
+worker_machine_type        = "e2-standard-4"
+worker_count               = 3           # Mínimo 3 (NATS HA + DORA compliance)
+worker_zones               = ["europe-west1-b", "europe-west1-c", "europe-west1-d"]
+
+# ── Almacenamiento ────────────────────────────────────────────────────────────
+os_disk_size_gb   = 100   # Disco OS por nodo (SSD)
+ceph_disk_size_gb = 200   # Disco Ceph adicional por worker (HDD, Rook-Ceph)
+
+# ── DNS / TLS ─────────────────────────────────────────────────────────────────
+domain_name        = "navarro-bores.com"   # NS ya en GCP Cloud DNS ✅
+letsencrypt_email  = "tu@email.com"        # Para notificaciones de cert-manager
+
+# ── Flux CD ───────────────────────────────────────────────────────────────────
+flux_github_owner = "arnavarr"
+flux_github_repo  = "blueupalm-gitops"
+
+# ── Demo Secrets (CAMBIAR antes de producción) ────────────────────────────────
+demo_keycloak_admin_pass = "changeme-demo-2024"
+demo_postgres_pass       = "pg-changeme-demo"
+demo_qdrant_api_key      = "qdrant-changeme-demo"

@@ -1,0 +1,58 @@
+# flux/clusters/bc-workload/applications/ingestion-agent/networkpolicy.yaml
+# BlueUPALM — NetworkPolicy para ingestion-agent
+#
+# ingestion-agent es un consumer CDC puro — no expone endpoints HTTP.
+# Solo necesita salida a NATS (publish verify.request, consume CDC eventos).
+
+---
+# ── Deny-all ingress (sin endpoints HTTP expuestos) ───────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingestion-agent-ingress-deny
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app: ingestion-agent
+  policyTypes: [Ingress]
+  ingress: []    # Sin tráfico entrante permitido
+
+---
+# ── Egress: solo NATS y DNS ───────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingestion-agent-egress
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app: ingestion-agent
+  policyTypes: [Egress]
+  egress:
+    # ── NATS JetStream (NKey auth, publicar verify.request) ─────────
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: messaging
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+
+    # ── DNS ─────────────────────────────────────────────────────────
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # ── Dark Service OpenZiti (CENTRAL_ENDPOINT vía overlay Ziti) ───
+    # En prod, el ingestion-agent publica a blueupalm-datalake.svc
+    # a través del túnel Ziti — no requiere NetworkPolicy de red K8s
+    # porque el overlay opera por encima de TCP.

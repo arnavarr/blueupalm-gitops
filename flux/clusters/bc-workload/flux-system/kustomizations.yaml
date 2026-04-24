@@ -1,0 +1,165 @@
+# flux/clusters/bc-workload/flux-system/kustomizations.yaml
+# BlueUPALM — Orden de sincronización Flux CD
+#
+# Cada Kustomization define una capa del stack CNCF con dependencias explícitas.
+# Flux aplica en el orden definido por dependsOn, garantizando que:
+#   - Cilium CNI esté activo antes de desplegar pods
+#   - External Secrets esté listo antes de Keycloak/SPIRE (necesitan secretos)
+#   - NATS esté operativo antes de edge-security e ingestion-agent
+#
+# Motor GitOps: Flux sincroniza desde github.com/arnavarr/blueupalm-gitops
+
+---
+# ── 1. Namespaces (sin dependencias) ──────────────────────────────────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: namespaces
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/infrastructure/namespaces
+  prune: true
+  wait: true
+  timeout: 2m
+
+---
+# ── 2. Infrastructure (CNI, CSI, cert-manager, External Secrets) ───────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: namespaces
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/infrastructure
+  prune: true
+  wait: true
+  timeout: 20m    # Cilium + cert-manager pueden tardar en iniciar
+
+---
+# ── 3. Security (Keycloak, SPIRE, OPA, OpenZiti, Dex) ─────────────────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: security
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: infrastructure
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/security
+  prune: true
+  wait: true
+  timeout: 15m
+
+---
+# ── 4. Networking (Traefik Ingress + Middlewares) ─────────────────────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: networking
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: infrastructure
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/networking
+  prune: true
+  wait: true
+  timeout: 10m
+
+---
+# ── 5. Messaging (NATS JetStream cluster 3 réplicas) ─────────────────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: messaging
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: security       # SPIRE SVIDs deben estar listos antes de NATS
+    - name: infrastructure # External Secrets debe poder inyectar NKeys
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/messaging
+  prune: true
+  wait: true
+  timeout: 10m
+
+---
+# ── 6. Data (Rook-Ceph, PostgreSQL, Qdrant, Trino) ───────────────────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: data
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: messaging      # Trino necesita NATS; Ceph necesita discos ready
+    - name: infrastructure
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/data
+  prune: true
+  wait: true
+  timeout: 30m    # Rook-Ceph inicialización es lenta (5-15 min)
+
+---
+# ── 7. Applications (edge-security, ingestion-agent, frontend) ────────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: applications
+  namespace: flux-system
+spec:
+  interval: 5m     # Polling más frecuente para Flux Image Automation
+  dependsOn:
+    - name: data
+    - name: security
+    - name: networking
+    - name: messaging
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/applications
+  prune: true
+  wait: true
+  timeout: 10m
+
+---
+# ── 8. Observability (Prometheus, Grafana, Loki, Hubble) ─────────────────────
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: observability
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: infrastructure
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/observability
+  prune: true
+  wait: true
+  timeout: 15m

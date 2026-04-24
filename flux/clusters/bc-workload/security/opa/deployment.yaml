@@ -1,0 +1,156 @@
+# flux/clusters/bc-workload/security/opa/deployment.yaml
+# BlueUPALM — Open Policy Agent (Motor de Políticas)
+#
+# OPA evalúa políticas Rego para:
+#   - Validar claims de tokens Biscuit (right, entity_id, domain)
+#   - Aplicar reglas PBC/FT (Ley 10/2010) sobre operaciones
+#   - Controlar acceso de edge-security a operaciones AML
+#
+# NUNCA expuesto vía Ingress — solo accesible desde applications namespace.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: security
+  labels:
+    app: opa
+    app.kubernetes.io/managed-by: flux
+spec:
+  replicas: 2    # HA para disponibilidad (DORA §6.2)
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      # gVisor: aislamiento de kernel para el motor de políticas
+      runtimeClassName: gvisor
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:latest-static
+          args:
+            - "run"
+            - "--server"
+            - "--log-level=info"
+            - "--log-format=json"
+            - "--set=decision_logs.console=true"    # Logs de decisión para auditoría
+            - "/policies"
+          ports:
+            - containerPort: 8181
+              name: http
+          volumeMounts:
+            - name: policies
+              mountPath: /policies
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8181
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8181
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: policies
+          configMap:
+            name: opa-policies
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: security
+spec:
+  selector:
+    app: opa
+  ports:
+    - port: 8181
+      targetPort: 8181
+      name: http
+
+---
+# ── Políticas Rego (sincronizadas por Flux desde Git) ─────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policies
+  namespace: security
+data:
+  # Política de autorización Biscuit — valida claims del token
+  biscuit_authz.rego: |
+    package blueupalm.authz
+
+    import future.keywords.if
+    import future.keywords.in
+
+    # Dominios válidos del sistema BlueUPALM (banca/seguros)
+    valid_domains := {"banking", "insurance", "admin"}
+
+    # Roles autorizados para acceso AML
+    authorized_roles := {"admin", "analyst", "supervisor"}
+
+    # Conceder acceso si el token tiene right("aml_access") y dominio válido
+    allow if {
+        input.token.right == "aml_access"
+        input.token.entity_type in valid_domains
+    }
+
+    # Denegar explícitamente si el dominio no está en la lista permitida
+    deny if {
+        not input.token.entity_type in valid_domains
+    }
+
+  # Política PBC/FT — control de operaciones reguladas (Ley 10/2010)
+  pbcft_policy.rego: |
+    package blueupalm.pbcft
+
+    import future.keywords.if
+
+    # Umbral de riesgo para activar revisión manual (Art. 17 Ley 10/2010)
+    high_risk_threshold := 10000  # EUR
+
+    # Operaciones de alto riesgo requieren supervisor
+    requires_supervisor if {
+        input.operation.amount > high_risk_threshold
+    }
+
+    requires_supervisor if {
+        input.operation.type == "international_transfer"
+    }
+
+    # Países de alto riesgo según FATF
+    high_risk_jurisdictions := {
+        "AF", "KP", "IR", "MM", "SY", "YE"
+    }
+
+    requires_enhanced_due_diligence if {
+        input.operation.destination_country in high_risk_jurisdictions
+    }

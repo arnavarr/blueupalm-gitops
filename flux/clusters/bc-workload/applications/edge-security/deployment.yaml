@@ -1,0 +1,190 @@
+# flux/clusters/bc-workload/applications/edge-security/deployment.yaml
+# BlueUPALM — edge-security (Rust/Axum + Biscuit + NATS)
+#
+# IMPORTANTE (basado en edge-security/src/main.rs):
+#   HTTP: solo /issue, /revoke, /health (puerto 8080)
+#   NATS: suscripción a verify.request, publicación en verify.success/denied
+#   /verify NO existe como endpoint HTTP — opera EXCLUSIVAMENTE por NATS
+#
+# OpenZiti middleware (ziti_middleware.rs):
+#   Valida header x-ziti-entity-type — ZITI_ENFORCE=true en producción
+#   Solo entidades: banking, insurance, admin pueden emitir tokens
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-security
+  namespace: applications
+  labels:
+    app: edge-security
+    app.kubernetes.io/managed-by: flux
+    compliance: dora-pbc-ft
+spec:
+  replicas: 2    # HA: mínimo 2 para DORA SLA
+  selector:
+    matchLabels:
+      app: edge-security
+  template:
+    metadata:
+      labels:
+        app: edge-security
+        spiffe-svid: "true"    # Etiqueta para SPIRE registration entry
+    spec:
+      # ── gVisor: sandboxing de kernel para datos bancarios (PBC/FT, RGPD Art.35)
+      runtimeClassName: gvisor
+
+      serviceAccountName: edge-security
+
+      # ── SPIRE SVID injection (identidad de workload) ──────────────────────
+      # El SPIRE agent monta el socket UNIX para emisión de SVIDs
+      volumes:
+        - name: spire-socket
+          hostPath:
+            path: /run/spire/sockets
+            type: DirectoryOrCreate
+        - name: biscuit-key
+          secret:
+            secretName: biscuit-root-key
+            defaultMode: 0400    # Solo lectura para el proceso
+        - name: tmp
+          emptyDir: {}
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+
+      containers:
+        - name: edge-security
+          image: ghcr.io/arnavarr/bc-edge-security:latest # {"$imagepolicy": "flux-system:bc-edge-security"}
+
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+
+          env:
+            # ── Clave Biscuit (desde GCP Secret Manager via External Secrets) ──
+            - name: BISCUIT_ROOT_KEY_PATH
+              value: "/run/secrets/biscuit/key.pkcs8"
+
+            # ── NATS (TCP plano — OpenZiti cifra el overlay) ──────────────────
+            - name: NATS_URL
+              value: "nats://nats.messaging.svc.cluster.local:4222"
+
+            # ── NKey Ed25519 seed (desde GCP Secret Manager) ─────────────────
+            - name: NATS_NKEY_SEED_RUST
+              valueFrom:
+                secretKeyRef:
+                  name: nats-nkey-seed-edge
+                  key: seed
+
+            # ── Configuración del nodo ────────────────────────────────────────
+            - name: EDGE_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: BISCUIT_TOKEN_TTL_SECS
+              value: "3600"
+
+            # ── OpenZiti: modo enforced en producción ─────────────────────────
+            - name: ZITI_ENFORCE
+              value: "true"
+
+            - name: RUST_LOG
+              value: "info"
+
+          volumeMounts:
+            - name: biscuit-key
+              mountPath: /run/secrets/biscuit
+              readOnly: true
+            - name: spire-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: edge-security
+  namespace: applications
+  annotations:
+    spiffe.io/spiffe-id: "spiffe://blueupalm/edge-security"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-security
+  namespace: applications
+  labels:
+    app: edge-security
+spec:
+  selector:
+    app: edge-security
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  type: ClusterIP
+
+---
+# ── HPA: autoescalado basado en carga ────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: edge-security
+  namespace: applications
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: edge-security
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

@@ -1,0 +1,229 @@
+# flux/clusters/bc-workload/infrastructure/external-secrets/helmrelease.yaml
+# BlueUPALM — External Secrets Operator + ClusterSecretStore GCP SM
+#
+# Inyecta los 8 secretos BlueUPALM desde GCP Secret Manager a K8s Secrets.
+# Usa Workload Identity — sin credenciales estáticas en el cluster.
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  interval: 24h
+  url: https://charts.external-secrets.io
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: external-secrets
+      version: "0.9.*"
+      sourceRef:
+        kind: HelmRepository
+        name: external-secrets
+        namespace: external-secrets
+
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+
+  values:
+    installCRDs: true
+
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "bc-workload-ext-secrets@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+
+    prometheus:
+      enabled: true
+      servicemonitor:
+        enabled: true
+        namespace: observability
+
+---
+# ── ClusterSecretStore: GCP Secret Manager ────────────────────────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: gcp-secret-manager
+spec:
+  provider:
+    gcpsm:
+      projectID: "${GCP_PROJECT_ID}"
+      # Workload Identity — sin auth.secretRef
+
+---
+# ── ExternalSecret: Keycloak admin password ──────────────────────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: keycloak-admin-password
+  namespace: security
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: keycloak-admin-password
+    creationPolicy: Owner
+  data:
+    - secretKey: password
+      remoteRef:
+        key: blueupalm-keycloak-admin-password
+
+---
+# ── ExternalSecret: NATS NKey seed (edge-security Rust) ──────────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: nats-nkey-seed-edge
+  namespace: applications
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: nats-nkey-seed-edge
+    creationPolicy: Owner
+  data:
+    - secretKey: seed
+      remoteRef:
+        key: blueupalm-nats-nkey-seed-edge
+
+---
+# ── ExternalSecret: NATS NKey seed (ingestion-agent Python) ──────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: nats-nkey-seed-ingestor
+  namespace: applications
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: nats-nkey-seed-ingestor
+    creationPolicy: Owner
+  data:
+    - secretKey: seed
+      remoteRef:
+        key: blueupalm-nats-nkey-seed-ingestor
+
+---
+# ── ExternalSecret: Biscuit root key PKCS#8 ──────────────────────────────────
+# CRÍTICO: Clave raíz de todo el sistema de autorización.
+# Rotación cada 90 días. Grace period: tokens existentes siguen siendo válidos
+# durante 7 días tras la rotación (la app debe manejar ambas claves).
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: biscuit-root-key
+  namespace: applications
+  annotations:
+    rotation.blueupalm.io/policy: "90d"
+    rotation.blueupalm.io/grace-period: "7d"
+    rotation.blueupalm.io/alert-before: "7d"    # Alerta en Prometheus: BiscuitRootKeyExpiring
+spec:
+  refreshInterval: 24h    # Verificar diariamente si hay nueva versión
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: biscuit-root-key
+    creationPolicy: Owner
+  data:
+    - secretKey: key.pkcs8
+      remoteRef:
+        key: blueupalm-biscuit-root-key-pkcs8
+
+---
+# ── ExternalSecret: PostgreSQL password ──────────────────────────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: postgres-password
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: postgres-password
+    creationPolicy: Owner
+  data:
+    - secretKey: password
+      remoteRef:
+        key: blueupalm-postgres-password
+
+---
+# ── ExternalSecret: Qdrant API key ───────────────────────────────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: qdrant-api-key
+  namespace: data
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: qdrant-api-key
+    creationPolicy: Owner
+  data:
+    - secretKey: api-key
+      remoteRef:
+        key: blueupalm-qdrant-api-key
+
+---
+# ── ExternalSecret: OpenZiti enrollment JWT ──────────────────────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: openziti-enrollment-jwt
+  namespace: security
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: openziti-enrollment-jwt
+    creationPolicy: Owner
+  data:
+    - secretKey: jwt
+      remoteRef:
+        key: blueupalm-openziti-enrollment-jwt
+
+---
+# ── ExternalSecret: SPIRE join token ─────────────────────────────────────────
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: spire-join-token
+  namespace: security
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: spire-join-token
+    creationPolicy: Owner
+  data:
+    - secretKey: token
+      remoteRef:
+        key: blueupalm-spire-join-token

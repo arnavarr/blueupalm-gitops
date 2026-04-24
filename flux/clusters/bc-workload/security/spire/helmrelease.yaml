@@ -1,0 +1,112 @@
+# flux/clusters/bc-workload/security/spire/helmrelease.yaml
+# BlueUPALM — SPIRE (Identidad de Workload SPIFFE)
+#
+# Emite SVIDs de corta duración (1h) para cada microservicio:
+#   spiffe://blueupalm/edge-security   → servicio Rust/Axum
+#   spiffe://blueupalm/ingestion-agent → ingestor Python
+#   spiffe://blueupalm/nats            → nodos NATS cluster
+#
+# Los SVIDs sirven como raíz de confianza para generar NKeys Ed25519 NATS.
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: spiffe
+  namespace: security
+spec:
+  interval: 24h
+  url: https://spiffe.github.io/helm-charts-hardened/
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: spire
+  namespace: security
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: spire
+      version: "0.20.*"
+      sourceRef:
+        kind: HelmRepository
+        name: spiffe
+        namespace: security
+
+  values:
+    global:
+      spire:
+        trustDomain: "blueupalm"
+        clusterName: "bc-workload"
+
+    spire-server:
+      image:
+        registry: ghcr.io
+        repository: spiffe/spire-server
+        tag: "1.9.1"
+
+      # SVIDs de corta duración (1 hora) para rotación automática
+      ca_ttl: 24h
+      default_svid_ttl: 1h
+
+      # Join token inyectado desde GCP Secret Manager
+      nodeAttestor:
+        k8sPsat:
+          enabled: true
+
+      # Entradas de registro para cada microservicio
+      # (También se pueden gestionar via SPIRE API)
+      controllerManager:
+        enabled: true
+        identities:
+          clusterSPIFFEIDs:
+            - name: edge-security
+              spiffeIDTemplate: "spiffe://blueupalm/edge-security"
+              podSelector:
+                matchLabels:
+                  app: edge-security
+              namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: applications
+              ttl: 1h
+
+            - name: ingestion-agent
+              spiffeIDTemplate: "spiffe://blueupalm/ingestion-agent"
+              podSelector:
+                matchLabels:
+                  app: ingestion-agent
+              namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: applications
+              ttl: 1h
+
+            - name: nats
+              spiffeIDTemplate: "spiffe://blueupalm/nats"
+              podSelector:
+                matchLabels:
+                  app: nats
+              namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: messaging
+              ttl: 1h
+
+      persistence:
+        enabled: true
+        storageClass: premium-rwo
+        size: 1Gi
+
+    spire-agent:
+      image:
+        registry: ghcr.io
+        repository: spiffe/spire-agent
+        tag: "1.9.1"
+
+      # Socket UNIX expuesto a los pods via volumeMount
+      socketPath: /run/spire/sockets/agent.sock
+
+      workloadAttestors:
+        k8s:
+          enabled: true
+          skipKubeletVerification: true

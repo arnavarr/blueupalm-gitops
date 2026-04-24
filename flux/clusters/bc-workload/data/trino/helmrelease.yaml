@@ -1,0 +1,229 @@
+# flux/clusters/bc-workload/data/trino/helmrelease.yaml
+# BlueUPALM — Trino (Federated Query Engine)
+#
+# Motor de consultas federadas sobre el Data Lakehouse (Architecture.md §4):
+#   - Conector Iceberg: buckets Ceph S3 (bronze/silver/gold)
+#   - Conector PostgreSQL: datos relacionales de aplicación
+#   - Conector Qdrant: búsquedas vectoriales desde SQL
+#
+# Acceso EXCLUSIVAMENTE INTERNO — nunca expuesto vía Ingress.
+# El endpoint blueupalm-datalake.svc (dark service OpenZiti) apunta a este pod.
+# Autenticación: LDAP/Kerberos contra Keycloak.
+#
+# Referenciado en tech-stack.md como "Federated Query Engine sobre Iceberg/Ceph"
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: trino
+  namespace: data
+spec:
+  interval: 24h
+  url: https://trinodb.github.io/charts
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: trino
+  namespace: data
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: trino
+      version: "0.27.*"
+      sourceRef:
+        kind: HelmRepository
+        name: trino
+        namespace: data
+
+  values:
+    image:
+      tag: "435"    # Trino 435 (LTS)
+
+    server:
+      workers: 2
+      node:
+        environment: production
+
+      config:
+        # ── Autenticación LDAP contra Keycloak ─────────────────────────────
+        authenticationType: "PASSWORD"
+
+        # ── Query logging para auditoría DORA ──────────────────────────────
+        query:
+          maxMemoryPerNode: "1GB"
+          maxTotalMemory: "4GB"
+          maxExecutionTime: "10m"
+
+    coordinator:
+      jvm:
+        maxHeapSize: "4G"
+      resources:
+        requests:
+          cpu: 1000m
+          memory: 4Gi
+        limits:
+          cpu: 4000m
+          memory: 8Gi
+
+    worker:
+      jvm:
+        maxHeapSize: "4G"
+      resources:
+        requests:
+          cpu: 1000m
+          memory: 4Gi
+        limits:
+          cpu: 4000m
+          memory: 8Gi
+
+    # ── Conectores del Data Lakehouse ────────────────────────────────────
+    additionalCatalogs:
+      # ── Iceberg sobre Ceph S3 (Medallion Architecture) ─────────────────
+      iceberg: |
+        connector.name=iceberg
+        iceberg.catalog.type=rest
+        iceberg.rest-catalog.uri=http://iceberg-rest-catalog.data.svc.cluster.local:8181
+        fs.native-s3.enabled=true
+        s3.endpoint=http://rook-ceph-rgw-blueupalm-s3.rook-ceph.svc.cluster.local
+        s3.path-style-access=true
+        s3.region=eu-west-1
+
+      # ── PostgreSQL (datos relacionales) ─────────────────────────────────
+      postgresql: |
+        connector.name=postgresql
+        connection-url=jdbc:postgresql://postgresql.data.svc.cluster.local:5432/blueupalm
+        connection-user=blueupalm
+        connection-password=${ENV:POSTGRES_PASSWORD}
+
+      # ── Qdrant (búsquedas vectoriales desde SQL) ────────────────────────
+      # Experimental: Trino Qdrant connector via HTTP
+      qdrant: |
+        connector.name=http
+        http.client.uri=http://qdrant.data.svc.cluster.local:6333
+        http.client.authentication.type=BEARER
+        http.client.authentication.token=${ENV:QDRANT_API_KEY}
+
+    # ── Variables desde External Secrets ─────────────────────────────────
+    envFrom:
+      - secretRef:
+          name: postgres-password
+      - secretRef:
+          name: qdrant-api-key
+
+    # ── NetworkPolicy: solo acceso interno ───────────────────────────────
+    # (Definido en NetworkPolicy separada abajo — Trino NUNCA en Ingress)
+
+    # ── Métricas Prometheus ────────────────────────────────────────────────
+    serviceMonitor:
+      enabled: true
+      namespace: observability
+
+---
+# ── NetworkPolicy: Trino NUNCA expuesto externamente ─────────────────────────
+# Acceso solo desde applications y el dark service OpenZiti
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trino-internal-only
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app: trino
+  policyTypes: [Ingress]
+  ingress:
+    # Desde applications (ingestion-agent para consultas Lakehouse)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: applications
+      ports:
+        - port: 8080
+    # Desde observabilidad (Prometheus scrape)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - port: 8080
+    # Tráfico interno Trino coordinator ↔ workers
+    - from:
+        - podSelector:
+            matchLabels:
+              app: trino
+      ports:
+        - port: 8080
+
+---
+# ── Apache Iceberg REST Catalog ───────────────────────────────────────────────
+# Servicio de metadatos del Data Lakehouse (requerido por conector Iceberg de Trino)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iceberg-rest-catalog
+  namespace: data
+  labels:
+    app: iceberg-rest-catalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iceberg-rest-catalog
+  template:
+    metadata:
+      labels:
+        app: iceberg-rest-catalog
+    spec:
+      runtimeClassName: gvisor
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: iceberg-rest
+          image: tabulario/iceberg-rest:0.10.0
+          ports:
+            - containerPort: 8181
+              name: http
+          env:
+            - name: CATALOG_WAREHOUSE
+              value: "s3://blueupalm-silver/"
+            - name: CATALOG_IO__IMPL
+              value: "org.apache.iceberg.aws.s3.S3FileIO"
+            - name: CATALOG_S3_ENDPOINT
+              value: "http://rook-ceph-rgw-blueupalm-s3.rook-ceph.svc.cluster.local"
+            - name: CATALOG_S3_PATH__STYLE__ACCESS
+              value: "true"
+            - name: AWS_REGION
+              value: "eu-west-1"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-rest-catalog
+  namespace: data
+spec:
+  selector:
+    app: iceberg-rest-catalog
+  ports:
+    - port: 8181
+      targetPort: 8181
+      name: http
+  type: ClusterIP

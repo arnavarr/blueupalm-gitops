@@ -1,0 +1,72 @@
+# flux/clusters/bc-workload/infrastructure/csi-gcp/storageclasses.yaml
+# BlueUPALM — StorageClasses GCP PD CSI Driver
+#
+# premium-rwo (SSD pd-ssd): Para workloads críticos (PostgreSQL, NATS, Qdrant)
+#   → IOPS garantizadas, latencia baja, cumplimiento SLA DORA
+# standard-rwo (HDD pd-standard): Para logs, spooling, archivado
+#   → Coste reducido para datos fríos (buffer DORA, local_spool.db)
+
+---
+# ── StorageClass: SSD para workloads críticos ─────────────────────────────────
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: premium-rwo
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-ssd
+  replication-type: none
+  # Región europea para soberanía de datos (GDPR/DORA)
+  disk-encryption-kms-key: ""    # Usar Google-managed key por defecto
+volumeBindingMode: WaitForFirstConsumer    # Provisionar en la misma zona que el pod
+reclaimPolicy: Retain    # NUNCA borrar datos automáticamente — compliance regulatorio
+allowVolumeExpansion: true
+
+---
+# ── StorageClass: HDD para datos fríos y buffer ───────────────────────────────
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard-rwo
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-standard
+  replication-type: none
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete    # Los datos de spooling/buffer sí pueden borrarse
+allowVolumeExpansion: true
+
+---
+# ── HelmRelease: GCP PD CSI Driver ───────────────────────────────────────────
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: gcp-pd-csi
+  namespace: kube-system
+spec:
+  interval: 24h
+  url: https://kubernetes-sigs.github.io/gcp-compute-persistent-disk-csi-driver
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: gcp-pd-csi-driver
+  namespace: kube-system
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: gcp-compute-persistent-disk-csi-driver
+      version: "1.13.*"
+      sourceRef:
+        kind: HelmRepository
+        name: gcp-pd-csi
+        namespace: kube-system
+  values:
+    node:
+      serviceAccount:
+        annotations:
+          iam.gke.io/gcp-service-account: "bc-workload-nodes@${GCP_PROJECT_ID}.iam.gserviceaccount.com"

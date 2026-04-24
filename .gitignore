@@ -1,0 +1,25 @@
+# BlueUPALM Infra — .gitignore
+
+# ── Terraform ──────────────────────────────────────────────────────────────
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/tfplan.out
+terraform/terraform.tfvars          # SECRETO: contiene passwords
+
+# ── Credenciales GCP ──────────────────────────────────────────────────────
+bootstrap/capg-credentials.json     # SECRETO: clave SA de Terraform
+
+# ── kubeconfigs ───────────────────────────────────────────────────────────
+*.kubeconfig
+kubeconfig-*
+
+# ── Mac OS ────────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Secrets locales ───────────────────────────────────────────────────────
+*.pem
+*.key
+*.pkcs8
+*.seed

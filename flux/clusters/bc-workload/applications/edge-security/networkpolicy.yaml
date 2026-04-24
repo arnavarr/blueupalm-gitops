@@ -1,0 +1,81 @@
+# flux/clusters/bc-workload/applications/edge-security/networkpolicy.yaml
+# BlueUPALM — NetworkPolicy para edge-security
+#
+# Basado en el análisis de edge-security/src/main.rs:
+#   - HTTP: /issue, /revoke, /health en :8080 (solo desde Traefik)
+#   - NATS: subscribe verify.request, publish verify.success/denied → NATS:4222
+#   - OPA:  consultas de política → OPA:8181
+#   - SPIRE: socket Unix local (no requiere NetworkPolicy)
+
+---
+# ── Ingress: solo Traefik puede alcanzar el puerto HTTP ──────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edge-security-ingress
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app: edge-security
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: networking    # namespace de Traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8080
+          protocol: TCP
+
+---
+# ── Egress: NATS (messaging), OPA (security), DNS ────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edge-security-egress
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app: edge-security
+  policyTypes: [Egress]
+  egress:
+    # ── NATS JetStream (autenticación NKey, sin TLS propio) ──────────
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: messaging
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: nats
+      ports:
+        - port: 4222
+          protocol: TCP
+
+    # ── OPA (validación de políticas Rego en cada request) ───────────
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: security
+          podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - port: 8181
+          protocol: TCP
+
+    # ── DNS (resolución de nombres de servicio K8s) ───────────────────
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # ── SPIRE Agent (socket Unix — no necesita NetworkPolicy de red) ──
+    # El SPIRE Agent corre en el mismo nodo; la comunicación es por hostPath.

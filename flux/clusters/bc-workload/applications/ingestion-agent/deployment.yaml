@@ -1,0 +1,163 @@
+# flux/clusters/bc-workload/applications/ingestion-agent/deployment.yaml
+# BlueUPALM — ingestion-agent (Python CDC Ingestor + DORA Classifier)
+#
+# Basado en /bc/config/settings.yaml y /bc/src/:
+#   - buffer.py: spool DORA en local_spool.db (PVC standard-rwo)
+#   - ingestor.py: consume CDC via NATS, clasifica riesgo AML
+#   - dora_notifier.py: alerta cuando buffer supera 300s (warning) / 7200s (crítico)
+#   - incident_classifier.py: clasifica incidentes según DORA Art. 17
+#
+# Schemas FINOS CDM + EIAC V06 montados desde CephFS (compartidos con edge-security)
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-agent
+  namespace: applications
+  labels:
+    app: ingestion-agent
+    app.kubernetes.io/managed-by: flux
+    compliance: dora-pbc-ft
+spec:
+  replicas: 1    # Singleton: gestiona el buffer DORA con estado local
+  selector:
+    matchLabels:
+      app: ingestion-agent
+  template:
+    metadata:
+      labels:
+        app: ingestion-agent
+        spiffe-svid: "true"
+    spec:
+      runtimeClassName: gvisor
+
+      serviceAccountName: ingestion-agent
+
+      volumes:
+        # ── Buffer DORA (spool local para resiliencia offline) ────────────
+        - name: spool-db
+          persistentVolumeClaim:
+            claimName: ingestion-agent-spool
+
+        # ── Schemas FINOS CDM + EIAC V06 (compartidos via CephFS) ────────
+        - name: schemas
+          persistentVolumeClaim:
+            claimName: blueupalm-schemas-cephfs
+
+        # ── SPIRE socket ─────────────────────────────────────────────────
+        - name: spire-socket
+          hostPath:
+            path: /run/spire/sockets
+            type: DirectoryOrCreate
+
+        - name: tmp
+          emptyDir: {}
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+
+      containers:
+        - name: ingestion-agent
+          image: ghcr.io/arnavarr/bc-ingestion-agent:latest # {"$imagepolicy": "flux-system:bc-ingestion-agent"}
+
+          env:
+            # ── NATS (TCP plano en túnel OpenZiti, NKey auth) ──────────────
+            - name: NATS_URL
+              value: "nats://nats.messaging.svc.cluster.local:4222"
+
+            - name: NATS_NKEY_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: nats-nkey-seed-ingestor
+                  key: seed
+
+            # ── Resiliencia DORA (de /bc/config/settings.yaml) ────────────
+            - name: WARNING_THRESHOLD_SEC
+              value: "300"          # Alerta warning a los 5 minutos
+            - name: CRITICAL_DORA_THRESHOLD_SEC
+              value: "7200"         # Incidente DORA crítico a las 2 horas
+            - name: CIRCUIT_BREAKER_THRESHOLD
+              value: "5"            # 5 fallos consecutivos → circuit breaker abierto
+            - name: MAX_RETRIES
+              value: "5"
+            - name: RETRY_BACKOFF_MS
+              value: "1000"
+
+            # ── Paths de configuración (de /bc/config/settings.yaml) ───────
+            - name: BUFFER_DB_PATH
+              value: "/data/spool/local_spool.db"
+            - name: SCHEMA_PATH
+              value: "/opt/blueupalm/schemas"
+
+            # ── Endpoint dark service OpenZiti ────────────────────────────
+            - name: CENTRAL_ENDPOINT
+              value: "blueupalm-datalake.svc"
+            - name: NETWORK_TIMEOUT_SEC
+              value: "5"
+
+          volumeMounts:
+            - name: spool-db
+              mountPath: /data/spool
+            - name: schemas
+              mountPath: /opt/blueupalm/schemas
+              readOnly: true
+            - name: spire-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false    # Necesita escribir en spool.db
+            capabilities:
+              drop: ["ALL"]
+
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ingestion-agent
+  namespace: applications
+
+---
+# ── PVC: Buffer DORA (local_spool.db) ────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ingestion-agent-spool
+  namespace: applications
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard-rwo    # HDD: datos de spooling temporal
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# ── PVC: Schemas CephFS (compartido entre ingestion-agent y edge-security) ────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: blueupalm-schemas-cephfs
+  namespace: applications
+spec:
+  accessModes: [ReadWriteMany]    # Compartido entre múltiples pods
+  storageClassName: cephfs
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,0 +1,176 @@
+# flux/clusters/bc-workload/applications/frontend/deployment.yaml
+# BlueUPALM — Frontend React 19 + TypeScript + Vite
+#
+# Interfaz de usuario del sistema AML. Accesible en:
+#   https://blueupalm.navarro-bores.com/
+#
+# Autenticación via Keycloak OIDC (PKCE flow — sin client secret en el browser).
+# Runtime gVisor para aislamiento de kernel incluso en el frontend.
+#
+# La imagen ghcr.io/blueup/frontend:latest se construye desde /bc/frontend/
+# Flux Image Automation detecta nuevas versiones automáticamente.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: applications
+  labels:
+    app: frontend
+    app.kubernetes.io/managed-by: flux
+  annotations:
+    # ── Flux Image Automation ─────────────────────────────────────────────
+    # Detecta nuevas imágenes en GHCR y actualiza este campo automáticamente
+    image.toolkit.fluxcd.io/name: "ghcr.io/blueup/frontend"
+    image.toolkit.fluxcd.io/policy: "semver:>=0.1.0"
+spec:
+  replicas: 2    # HA para disponibilidad frontend
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      runtimeClassName: gvisor
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101    # nginx user
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: frontend
+          image: ghcr.io/arnavarr/bc-frontend:latest # {"$imagepolicy": "flux-system:bc-frontend"}
+
+          ports:
+            - containerPort: 80
+              name: http
+
+          env:
+            # ── OIDC Config para Keycloak ────────────────────────────────
+            - name: VITE_KEYCLOAK_URL
+              value: "https://auth.navarro-bores.com/auth"
+            - name: VITE_KEYCLOAK_REALM
+              value: "blueupalm"
+            - name: VITE_KEYCLOAK_CLIENT_ID
+              value: "frontend-app"
+
+            # ── API endpoints ─────────────────────────────────────────────
+            - name: VITE_EDGE_API_URL
+              value: "https://blueupalm.navarro-bores.com/api/edge"
+
+            # ── Feature flags ─────────────────────────────────────────────
+            - name: VITE_DEMO_MODE
+              value: "true"
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: applications
+  labels:
+    app: frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
+  type: ClusterIP
+
+---
+# ── Flux ImagePolicy: detectar nuevas versiones del frontend ─────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: frontend
+  namespace: flux-system
+spec:
+  image: ghcr.io/arnavarr/bc-frontend
+  interval: 5m    # Poll cada 5 minutos para nuevas versiones
+
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: frontend
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: frontend
+  policy:
+    semver:
+      range: ">=0.1.0"
+
+---
+# ── NetworkPolicy: frontend solo acepta tráfico de Traefik ───────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-ingress-only
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: networking
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 80

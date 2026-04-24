@@ -1,0 +1,121 @@
+# flux/clusters/bc-workload/applications/image-automation.yaml
+# BlueUPALM — Flux Image Automation
+#
+# Detecta nuevas imágenes publicadas en GHCR por los workflows de ./bc
+# y actualiza automáticamente los tags en los deployments de este repo.
+#
+# Flujo:
+#   GitHub Actions (bc repo) push → ghcr.io/arnavarr/bc-* → ImagePolicy detecta
+#   → ImageUpdateAutomation hace commit a blueupalm-gitops → Flux sync → K8s rollout
+
+---
+# ── ImageRepository: edge-security ────────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: bc-edge-security
+  namespace: flux-system
+spec:
+  image: ghcr.io/arnavarr/bc-edge-security
+  interval: 5m
+  secretRef:
+    name: ghcr-auth    # imagePullSecret con GITHUB_TOKEN (ExternalSecret desde GCP SM)
+
+---
+# ── ImagePolicy: edge-security (semver >= 0.1.0) ──────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: bc-edge-security
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: bc-edge-security
+  policy:
+    semver:
+      range: ">=0.1.0"    # En desarrollo: usar ">=0.0.0-0" para prereleases
+
+---
+# ── ImageRepository: ingestion-agent ─────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: bc-ingestion-agent
+  namespace: flux-system
+spec:
+  image: ghcr.io/arnavarr/bc-ingestion-agent
+  interval: 5m
+  secretRef:
+    name: ghcr-auth
+
+---
+# ── ImagePolicy: ingestion-agent ──────────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: bc-ingestion-agent
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: bc-ingestion-agent
+  policy:
+    semver:
+      range: ">=0.1.0"
+
+---
+# ── ImageRepository: frontend ─────────────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: bc-frontend
+  namespace: flux-system
+spec:
+  image: ghcr.io/arnavarr/bc-frontend
+  interval: 5m
+  secretRef:
+    name: ghcr-auth
+
+---
+# ── ImagePolicy: frontend ─────────────────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: bc-frontend
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: bc-frontend
+  policy:
+    semver:
+      range: ">=0.1.0"
+
+---
+# ── ImageUpdateAutomation: commit automático al detectar nueva imagen ─────────
+apiVersion: image.toolkit.fluxcd.io/v1beta1
+kind: ImageUpdateAutomation
+metadata:
+  name: bc-applications
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system    # Repositorio blueupalm-gitops
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        email: flux@blueupalm.navarro-bores.com
+        name: Flux Image Updater
+      messageTemplate: |
+        chore(flux): update {{ .ImagePolicy.Name }} to {{ .NewImage }}
+
+        Updated by: Flux Image Automation
+        Triggered by: new image in GHCR
+        Previous: {{ .OldImage }}
+    push:
+      branch: main
+  update:
+    strategy: Setters    # Usa comentarios # {"$imagepolicy": "flux-system:bc-*"} en los deployments

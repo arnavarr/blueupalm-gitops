@@ -1,0 +1,60 @@
+# flux/clusters/bc-workload/applications/runtimeclasses.yaml
+# BlueUPALM — RuntimeClasses para Sandboxing de Workloads
+#
+# gVisor (runsc): runtime PRINCIPAL para todos los workloads BC con datos bancarios.
+#   - Intercepta syscalls a nivel de proceso (userspace kernel)
+#   - No requiere nested virtualization en GCE e2-standard-4
+#   - Equivalente regulatorio a Kata para PBC/FT + RGPD Art. 35
+#
+# kata-containers: instalado en imagen GCE, disponible para activación futura.
+#   - Requiere nested virtualization (e2 series en europe-west1 puede no tenerla)
+#   - Activar si se migra a n2-standard-4 con nested-virt garantizada
+
+---
+# ── RuntimeClass: gVisor (runtime principal BlueUPALM) ───────────────────────
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+  labels:
+    app.kubernetes.io/managed-by: flux
+    sandbox: "true"
+    runtime-type: "userspace-kernel"
+spec:
+  handler: runsc    # Handler configurado en containerd/config.toml de la imagen GCE
+
+  # Overhead de recursos del runtime (gVisor consume ~10MB RAM adicional por pod)
+  overhead:
+    podFixed:
+      memory: "10Mi"
+      cpu: "10m"
+
+  # Distribución de pods gVisor — preferentemente en workers (no CP)
+  scheduling:
+    nodeSelector:
+      role: worker
+
+---
+# ── RuntimeClass: Kata Containers (opcional, activación futura) ───────────────
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-containers
+  labels:
+    app.kubernetes.io/managed-by: flux
+    sandbox: "true"
+    runtime-type: "micro-vm"
+    status: "optional-future-activation"
+spec:
+  handler: kata    # Handler configurado en containerd/config.toml de la imagen GCE
+
+  overhead:
+    podFixed:
+      memory: "160Mi"    # Kata necesita VM overhead por pod
+      cpu: "250m"
+
+  scheduling:
+    nodeSelector:
+      role: worker
+      # Descomentar si los workers tienen nested-virt confirmada:
+      # nested-virtualization: "true"

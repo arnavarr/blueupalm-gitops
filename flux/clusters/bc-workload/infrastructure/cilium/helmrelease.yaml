@@ -1,0 +1,119 @@
+# flux/clusters/bc-workload/infrastructure/cilium/helmrelease.yaml
+# BlueUPALM — Cilium CNI con eBPF + WireGuard + Hubble
+#
+# Cilium reemplaza kube-proxy (kubeProxyReplacement=true).
+# WireGuard cifra TODO el tráfico entre nodos (datos bancarios en tránsito).
+# Hubble proporciona observabilidad L7 — visible en hubble.navarro-bores.com
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: cilium
+  namespace: cilium-system
+spec:
+  interval: 24h
+  url: https://helm.cilium.io/
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: cilium-system
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: cilium
+      version: "1.15.*"
+      sourceRef:
+        kind: HelmRepository
+        name: cilium
+        namespace: cilium-system
+
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+
+  values:
+    # ── Reemplazar kube-proxy con eBPF ──────────────────────────────────────
+    kubeProxyReplacement: true
+    k8sServiceHost: "10.0.0.2"      # IP interna del API server (via LB interno)
+    k8sServicePort: "6443"
+
+    # ── WireGuard: cifrado en tránsito de datos bancarios ──────────────────
+    # Cifra TODO el tráfico entre nodos — requerido para datos PBC/FT y DORA
+    encryption:
+      enabled: true
+      type: wireguard
+      nodeEncryption: true    # Cifra también tráfico host-to-host
+
+    # ── Hubble: observabilidad L7 ────────────────────────────────────────────
+    hubble:
+      enabled: true
+      metrics:
+        enabled:
+          - dns
+          - drop
+          - tcp
+          - flow
+          - port-distribution
+          - httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction
+      relay:
+        enabled: true
+      ui:
+        enabled: true
+        ingress:
+          enabled: false    # Traefik gestiona el Ingress, no Cilium
+
+    # ── L7 Policy (NetworkPolicy avanzadas) ──────────────────────────────────
+    # Habilitar soporte para políticas de nivel de aplicación
+    policyEnforcementMode: "default"
+    enableL7Proxy: true
+
+    # ── Pod Security ──────────────────────────────────────────────────────────
+    securityContext:
+      capabilities:
+        ciliumAgent:
+          - CHOWN
+          - KILL
+          - NET_ADMIN
+          - NET_RAW
+          - IPC_LOCK
+          - SYS_ADMIN
+          - SYS_RESOURCE
+          - DAC_OVERRIDE
+          - FOWNER
+          - SETGID
+          - SETUID
+
+    # ── Prometheus metrics ────────────────────────────────────────────────────
+    prometheus:
+      enabled: true
+      port: 9962
+      serviceMonitor:
+        enabled: true
+        namespace: observability
+
+    operator:
+      prometheus:
+        enabled: true
+        serviceMonitor:
+          enabled: true
+          namespace: observability
+
+    # ── IP Address Management ─────────────────────────────────────────────────
+    ipam:
+      mode: kubernetes    # Usa los rangos de pod CIDR de Kubernetes
+
+    # ── GCE específico ────────────────────────────────────────────────────────
+    nodeinit:
+      enabled: true
+      reconfigureKubelet: true
+      removeCbrBridge: true

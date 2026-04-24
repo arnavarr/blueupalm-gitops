@@ -1,0 +1,108 @@
+# flux/clusters/bc-workload/data/qdrant/helmrelease.yaml
+# BlueUPALM — Qdrant (Vector Database)
+#
+# Almacena la memoria vectorial de sesión del sistema AML:
+#   - Embeddings de transacciones para detección de patrones similares
+#   - Memoria de contexto de los agentes IA (Semantic Kernel / LangChain)
+#   - Índices de similitud para screening de entidades (OFAC/EU sanctions)
+#
+# Referenciado en Architecture.md: "Qdrant almacena la memoria vectorial de la sesión"
+# NUNCA expuesto vía Ingress — acceso exclusivo desde applications namespace.
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: qdrant
+  namespace: data
+spec:
+  interval: 24h
+  url: https://qdrant.github.io/qdrant-helm
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: qdrant
+  namespace: data
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: qdrant
+      version: "0.9.*"
+      sourceRef:
+        kind: HelmRepository
+        name: qdrant
+        namespace: data
+
+  values:
+    replicaCount: 1    # Demo: 1 réplica. Producción: 3 para HA
+
+    config:
+      service:
+        api_key: ""    # API key gestionada via ExternalSecret (ver abajo)
+
+    persistence:
+      storageClassName: premium-rwo    # SSD para búsquedas vectoriales (latencia crítica)
+      size: 20Gi
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+
+    # Pod Security
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop: ["ALL"]
+
+    # API Key desde ExternalSecret (ya definido en external-secrets/helmrelease.yaml)
+    apiKey:
+      existingSecret: qdrant-api-key
+      existingSecretKey: api-key
+
+    # ServiceMonitor Prometheus
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        namespace: observability
+
+---
+# ── NetworkPolicy: solo acceso desde applications ────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant-internal-only
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: applications
+      ports:
+        - port: 6333    # REST API
+        - port: 6334    # gRPC
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - port: 6333

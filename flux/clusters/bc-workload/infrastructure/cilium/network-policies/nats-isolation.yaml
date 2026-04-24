@@ -1,0 +1,179 @@
+# flux/clusters/bc-workload/infrastructure/cilium/network-policies/nats-isolation.yaml
+# BlueUPALM — Políticas de red NATS (CiliumNetworkPolicy)
+#
+# REGLA CRÍTICA DE SEGURIDAD:
+#   - ingestion-agent (Python): SOLO puede publicar en verify.request/triage.request
+#     y suscribirse a verify.success/verify.denied/triage.response.*
+#   - edge-security (Rust): SOLO puede suscribirse a verify.request y publicar
+#     en verify.success/verify.denied/dora.alert.*
+#   - El puerto 8222 (NATS monitoring) NUNCA es accesible desde fuera del cluster
+#
+# Basado en la configuración de ACLs de /bc/config/nats.conf
+
+---
+# ── Política: ingestion-agent → NATS ─────────────────────────────────────────
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingestion-agent-nats-access
+  namespace: applications
+spec:
+  description: "ingestion-agent solo puede acceder a NATS port 4222 (subjects controlados por NKey ACL)"
+  endpointSelector:
+    matchLabels:
+      app: ingestion-agent
+
+  egress:
+    # Permitir conexión TCP a NATS (port 4222)
+    # La restricción de subjects se hace a nivel de NKey ACL en nats.conf
+    - toEndpoints:
+        - matchLabels:
+            app: nats
+            io.kubernetes.pod.namespace: messaging
+      toPorts:
+        - ports:
+            - port: "4222"
+              protocol: TCP
+
+    # Permitir DNS (kube-dns)
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+
+---
+# ── Política: edge-security → NATS ───────────────────────────────────────────
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: edge-security-nats-access
+  namespace: applications
+spec:
+  description: "edge-security solo puede acceder a NATS port 4222 y OPA port 8181"
+  endpointSelector:
+    matchLabels:
+      app: edge-security
+
+  egress:
+    # NATS — verificación de tokens Biscuit vía verify.request
+    - toEndpoints:
+        - matchLabels:
+            app: nats
+            io.kubernetes.pod.namespace: messaging
+      toPorts:
+        - ports:
+            - port: "4222"
+              protocol: TCP
+
+    # OPA — validación de políticas Rego
+    - toEndpoints:
+        - matchLabels:
+            app: opa
+            io.kubernetes.pod.namespace: security
+      toPorts:
+        - ports:
+            - port: "8181"
+              protocol: TCP
+
+    # DNS
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+
+  ingress:
+    # Solo Traefik puede enviar tráfico HTTP a edge-security
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: traefik
+            io.kubernetes.pod.namespace: networking
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+
+---
+# ── Política: NATS monitoring NUNCA expuesto externamente ────────────────────
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: nats-deny-external-monitoring
+  namespace: messaging
+spec:
+  description: "Bloquea acceso externo al puerto de monitoring NATS (8222)"
+  endpointSelector:
+    matchLabels:
+      app: nats
+
+  ingress:
+    # Permitir solo desde el namespace observability (Prometheus scrape)
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "8222"
+              protocol: TCP
+
+    # Tráfico cliente NATS solo desde applications y security
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: applications
+      toPorts:
+        - ports:
+            - port: "4222"
+              protocol: TCP
+
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: security
+      toPorts:
+        - ports:
+            - port: "4222"
+              protocol: TCP
+
+    # Tráfico de cluster interno (routes entre nats-0, nats-1, nats-2)
+    - fromEndpoints:
+        - matchLabels:
+            app: nats
+            io.kubernetes.pod.namespace: messaging
+      toPorts:
+        - ports:
+            - port: "6222"
+              protocol: TCP
+
+---
+# ── Política: namespaces de datos — sin egress a internet ────────────────────
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: data-no-external-egress
+  namespace: data
+spec:
+  description: "Los servicios de datos (PG, Qdrant, Trino, Ceph) no pueden salir a internet"
+  endpointSelector: {}    # Aplica a todos los pods del namespace
+
+  egress:
+    # Solo DNS interno
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+
+    # Tráfico interno al cluster (otros namespaces)
+    - toEntities:
+        - cluster

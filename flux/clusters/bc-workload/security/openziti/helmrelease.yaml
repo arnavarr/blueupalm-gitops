@@ -1,0 +1,120 @@
+# flux/clusters/bc-workload/security/openziti/helmrelease.yaml
+# BlueUPALM — OpenZiti Zero Trust Networking
+#
+# ARQUITECTURA (basada en edge-security/src/main.rs líneas 13-16):
+#   NATS opera en TCP plano DENTRO del túnel OpenZiti.
+#   OpenZiti provee el mTLS del overlay — NATS no necesita TLS nativo propio.
+#   Los Edge Connectors CDC on-premise de entidades bancarias se conectan
+#   EXCLUSIVAMENTE a través del overlay OpenZiti (dark service).
+#
+# Componentes desplegados:
+#   1. OpenZiti Controller — gestión del overlay y PKI
+#   2. OpenZiti Edge Router — punto de entrada para Edge Connectors externos
+#
+# Dark service: blueupalm-datalake.svc (NO resoluble por DNS público)
+# Verificado en /bc/config/settings.yaml: network.central_endpoint
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: openziti
+  namespace: security
+spec:
+  interval: 24h
+  url: https://docs.openziti.io/helm-charts/
+
+---
+# ── OpenZiti Controller ───────────────────────────────────────────────────────
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: ziti-controller
+  namespace: security
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ziti-controller
+      version: "1.*"
+      sourceRef:
+        kind: HelmRepository
+        name: openziti
+        namespace: security
+
+  values:
+    # PKI del controller — raíz de confianza para todos los SVIDs de la red overlay
+    pki:
+      trust-domain: "blueupalm.ziti"
+
+    # Enrollment JWT para routers (inyectado desde GCP SM via External Secrets)
+    enrollmentSecret:
+      existingSecret: openziti-enrollment-jwt
+      key: jwt
+
+    persistence:
+      storageClass: premium-rwo
+      size: 2Gi
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+
+---
+# ── OpenZiti Edge Router ───────────────────────────────────────────────────────
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: ziti-router
+  namespace: security
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ziti-router
+      version: "1.*"
+      sourceRef:
+        kind: HelmRepository
+        name: openziti
+        namespace: security
+
+  values:
+    # El edge router es el único punto de entrada externo para Edge Connectors CDC
+    edge:
+      enabled: true
+      advertisedHost: "ziti.navarro-bores.com"
+
+    linkDialers:
+      - binding: transport
+
+    persistence:
+      storageClass: premium-rwo
+      size: 1Gi
+
+---
+# ── Dark Service: blueupalm-datalake.svc ─────────────────────────────────────
+# Este Service K8s es el destino interno del dark service OpenZiti.
+# NO tiene Ingress — solo resoluble dentro del overlay Ziti.
+# Referenciado en /bc/config/settings.yaml: network.central_endpoint
+apiVersion: v1
+kind: Service
+metadata:
+  name: blueupalm-datalake
+  namespace: data
+  annotations:
+    # Anotación para que OpenZiti sepa que este es el backend del dark service
+    openziti.io/service: "blueupalm-datalake-svc"
+    openziti.io/host: "blueupalm-datalake.svc"
+spec:
+  selector:
+    app: trino    # Trino es el Federated Query Engine del Data Lakehouse
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: trino-http
+  # ClusterIP: solo accesible internamente, nunca expuesto por LoadBalancer
+  type: ClusterIP

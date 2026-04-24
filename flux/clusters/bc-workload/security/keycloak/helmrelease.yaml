@@ -1,0 +1,160 @@
+# flux/clusters/bc-workload/security/keycloak/helmrelease.yaml
+# BlueUPALM — Keycloak 24.0 (Identidad Humana)
+#
+# Realm 'blueupalm' con roles admin/analyst/supervisor/readonly,
+# multi-tenancy por entity_id, OAuth2/OIDC para frontend React.
+# Password admin inyectada desde GCP Secret Manager via External Secrets.
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: bitnami
+  namespace: security
+spec:
+  interval: 24h
+  url: https://charts.bitnami.com/bitnami
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: keycloak
+  namespace: security
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: keycloak
+      version: "21.*"    # Keycloak 24.0
+      sourceRef:
+        kind: HelmRepository
+        name: bitnami
+        namespace: security
+
+  values:
+    image:
+      registry: quay.io
+      repository: keycloak/keycloak
+      tag: "24.0"
+
+    auth:
+      adminUser: admin
+      existingSecret: keycloak-admin-password
+      passwordSecretKey: password
+
+    # ── Configuración del servidor ────────────────────────────────────────
+    production: true
+    proxy: edge    # Traefik maneja TLS, Keycloak recibe HTTP interno
+
+    # ── Base de datos PostgreSQL ──────────────────────────────────────────
+    postgresql:
+      enabled: false    # Usar PostgreSQL externo del namespace data
+
+    externalDatabase:
+      host: postgresql.data.svc.cluster.local
+      port: 5432
+      database: keycloak
+      user: keycloak
+      existingSecret: postgres-password
+      existingSecretPasswordKey: password
+
+    # ── Importar realm blueupalm al inicio ────────────────────────────────
+    extraEnvVars:
+      - name: KC_IMPORT
+        value: "/opt/bitnami/keycloak/data/import/blueupalm-realm.json"
+      - name: KC_FEATURES
+        value: "token-exchange,admin-fine-grained-authz"
+      - name: KC_HOSTNAME_STRICT
+        value: "false"
+      - name: KC_HTTP_RELATIVE_PATH
+        value: "/auth"
+
+    extraVolumes:
+      - name: realm-config
+        configMap:
+          name: keycloak-realm-blueupalm
+
+    extraVolumeMounts:
+      - name: realm-config
+        mountPath: /opt/bitnami/keycloak/data/import
+        readOnly: true
+
+    # ── Recursos ──────────────────────────────────────────────────────────
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+
+    # ── Métricas Prometheus ───────────────────────────────────────────────
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        namespace: observability
+
+---
+# ── ConfigMap: Realm blueupalm (configuración base) ──────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-blueupalm
+  namespace: security
+data:
+  blueupalm-realm.json: |
+    {
+      "realm": "blueupalm",
+      "enabled": true,
+      "displayName": "BlueUPALM — AML Platform",
+      "sslRequired": "external",
+      "roles": {
+        "realm": [
+          {"name": "admin",      "description": "Administrador de la plataforma AML"},
+          {"name": "analyst",    "description": "Analista AML — acceso a alertas y casos"},
+          {"name": "supervisor", "description": "Supervisor AML — aprobación de casos"},
+          {"name": "readonly",   "description": "Acceso de solo lectura a dashboards"}
+        ]
+      },
+      "clients": [
+        {
+          "clientId": "frontend-app",
+          "name": "BlueUPALM Frontend React",
+          "publicClient": true,
+          "redirectUris": ["https://blueupalm.navarro-bores.com/*"],
+          "webOrigins": ["https://blueupalm.navarro-bores.com"],
+          "standardFlowEnabled": true,
+          "attributes": {"pkce.code.challenge.method": "S256"}
+        },
+        {
+          "clientId": "edge-security-app",
+          "name": "edge-security Service",
+          "publicClient": false,
+          "serviceAccountsEnabled": true,
+          "standardFlowEnabled": false,
+          "clientAuthenticatorType": "client-secret"
+        },
+        {
+          "clientId": "grafana",
+          "name": "Grafana via Dex",
+          "publicClient": false,
+          "redirectUris": ["https://grafana.navarro-bores.com/login/generic_oauth"]
+        }
+      ],
+      "protocolMappers": [
+        {
+          "name": "entity_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "entity_id",
+            "claim.name": "entity_id",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ],
+      "passwordPolicy": "length(12) and upperCase(1) and digits(1) and specialChars(1)"
+    }

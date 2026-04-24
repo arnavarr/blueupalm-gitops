@@ -1,0 +1,134 @@
+# flux/clusters/bc-workload/data/postgresql/helmrelease.yaml
+# BlueUPALM — PostgreSQL (Base de Datos Relacional)
+#
+# Almacena datos relacionales de la aplicación:
+#   - Usuarios y entidades multi-tenant (entity_id)
+#   - Casos AML y alertas procesadas
+#   - Configuración de políticas OPA (persist en DB)
+#   - Base de datos de Keycloak (realm blueupalm)
+#
+# StorageClass premium-rwo (SSD): latencia baja para consultas transaccionales.
+# Password inyectada desde GCP Secret Manager via External Secrets.
+# NUNCA expuesto vía Ingress — solo accesible desde namespaces autorizados.
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: postgresql
+  namespace: data
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: postgresql
+      version: "14.*"    # PostgreSQL 16.x
+      sourceRef:
+        kind: HelmRepository
+        name: bitnami
+        namespace: data
+
+  values:
+    auth:
+      database: blueupalm
+      username: blueupalm
+      existingSecret: postgres-password
+      secretKeys:
+        adminPasswordKey: password
+        userPasswordKey: password
+
+    # Base de datos adicional para Keycloak
+    initdb:
+      scripts:
+        keycloak-db.sql: |
+          CREATE DATABASE keycloak OWNER blueupalm;
+          GRANT ALL PRIVILEGES ON DATABASE keycloak TO blueupalm;
+
+    primary:
+      persistence:
+        enabled: true
+        storageClass: premium-rwo    # SSD para IOPS garantizadas (DORA SLA)
+        size: 50Gi
+
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 2000m
+          memory: 4Gi
+
+      # Pod Security
+      podSecurityContext:
+        enabled: true
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containerSecurityContext:
+        enabled: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: false
+        capabilities:
+          drop: ["ALL"]
+
+    # ── Métricas Prometheus ────────────────────────────────────────────────
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        namespace: observability
+
+---
+# ── HelmRepository bitnami (compartido) ───────────────────────────────────────
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: bitnami
+  namespace: data
+spec:
+  interval: 24h
+  url: https://charts.bitnami.com/bitnami
+
+---
+# ── NetworkPolicy: solo acceso interno ───────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgresql-internal-only
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Desde applications (edge-security, ingestion-agent)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: applications
+      ports:
+        - port: 5432
+    # Desde security (Keycloak)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: security
+      ports:
+        - port: 5432
+    # Métricas desde observabilidad
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - port: 9187
+  egress:
+    # Solo DNS interno
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP

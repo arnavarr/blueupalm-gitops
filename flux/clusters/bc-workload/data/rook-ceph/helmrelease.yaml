@@ -1,0 +1,205 @@
+# flux/clusters/bc-workload/data/rook-ceph/helmrelease.yaml
+# BlueUPALM — Rook-Ceph: Almacenamiento Soberano S3 + CephFS
+#
+# Utiliza el disco /dev/sdb (200GB HDD) de cada uno de los 3 workers.
+# Total: 600GB de almacenamiento Ceph con replicación 3x.
+#
+# Buckets Medallion Architecture (ingestion-architecture.md):
+#   bronze/ → datos inmutables raw (CDC original), retención 7 años audit trail
+#   silver/ → datos procesados Parquet/Iceberg
+#   gold/   → datos enriquecidos para dashboards AML
+#
+# CephFS: volumen compartido para schemas FINOS CDM + EIAC V06
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  interval: 24h
+  url: https://charts.rook.io/release
+
+---
+# ── Rook-Ceph Operator ────────────────────────────────────────────────────────
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: rook-ceph-operator
+  namespace: rook-ceph
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: rook-ceph
+      version: "v1.13.*"
+      sourceRef:
+        kind: HelmRepository
+        name: rook-ceph
+        namespace: rook-ceph
+  values:
+    monitoring:
+      enabled: true
+
+---
+# ── CephCluster: 3 OSDs en /dev/sdb de cada worker ───────────────────────────
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: rook-ceph-cluster
+  namespace: rook-ceph
+spec:
+  interval: 10m
+  dependsOn:
+    - name: rook-ceph-operator
+  chart:
+    spec:
+      chart: rook-ceph-cluster
+      version: "v1.13.*"
+      sourceRef:
+        kind: HelmRepository
+        name: rook-ceph
+        namespace: rook-ceph
+
+  values:
+    operatorNamespace: rook-ceph
+
+    cephClusterSpec:
+      dataDirHostPath: /var/lib/rook
+      mon:
+        count: 3
+        allowMultiplePerNode: false    # Anti-affinity estricta (DORA)
+
+      mgr:
+        count: 1
+
+      # Usar SOLO el disco /dev/sdb (200GB HDD) de cada worker
+      storage:
+        useAllNodes: false
+        useAllDevices: false
+        nodes:
+          - name: "*"    # Todos los workers
+            devices:
+              - name: "sdb"
+
+      resources:
+        osd:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+
+    # ── Object Store: S3 compatible (Medallion Architecture) ───────────────
+    cephObjectStores:
+      - name: blueupalm-s3
+        spec:
+          metadataPool:
+            failureDomain: host
+            replicated:
+              size: 3
+          dataPool:
+            failureDomain: host
+            replicated:
+              size: 3
+          preservePoolsOnDelete: true    # NUNCA borrar datos regulatorios automáticamente
+          gateway:
+            port: 80
+            instances: 1
+
+        storageClass:
+          enabled: true
+          name: ceph-s3
+          reclaimPolicy: Retain
+          parameters:
+            region: eu-west-1    # Región ficticia para compatibilidad S3
+
+    # ── CephFilesystem: para schemas FINOS CDM + EIAC ─────────────────────
+    cephFileSystems:
+      - name: blueupalm-fs
+        spec:
+          metadataPool:
+            replicated:
+              size: 3
+          dataPools:
+            - failureDomain: host
+              replicated:
+                size: 3
+          preserveFilesystemOnDelete: true
+          metadataServer:
+            activeCount: 1
+            activeStandby: true
+
+        storageClass:
+          enabled: true
+          name: cephfs
+          reclaimPolicy: Retain
+
+    # ── Block Storage: para PostgreSQL, Qdrant, NATS ──────────────────────
+    cephBlockPools:
+      - name: ceph-blockpool
+        spec:
+          failureDomain: host
+          replicated:
+            size: 3
+
+        storageClass:
+          enabled: true
+          name: ceph-block
+          reclaimPolicy: Retain
+          allowVolumeExpansion: true
+
+    monitoring:
+      enabled: true
+      createPrometheusRules: true
+
+---
+# ── Job: Crear buckets Medallion Architecture ─────────────────────────────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ceph-create-buckets
+  namespace: rook-ceph
+  annotations:
+    helm.sh/hook: post-install
+    helm.sh/hook-weight: "20"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: s3-init
+          image: amazon/aws-cli:latest
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-object-user-blueupalm-s3-admin
+                  key: AccessKey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-object-user-blueupalm-s3-admin
+                  key: SecretKey
+            - name: AWS_DEFAULT_REGION
+              value: eu-west-1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ENDPOINT="http://rook-ceph-rgw-blueupalm-s3.rook-ceph.svc.cluster.local"
+
+              for bucket in bronze silver gold; do
+                aws --endpoint-url="$ENDPOINT" s3api create-bucket \
+                  --bucket "blueupalm-$bucket" 2>/dev/null || echo "$bucket ya existe"
+                echo "✅ Bucket blueupalm-$bucket OK"
+              done
+
+              # Versioning en bronze para audit trail inmutable (GDPR Art. 17)
+              aws --endpoint-url="$ENDPOINT" s3api put-bucket-versioning \
+                --bucket blueupalm-bronze \
+                --versioning-configuration Status=Enabled
+              echo "✅ Versioning activado en bronze (audit trail inmutable)"

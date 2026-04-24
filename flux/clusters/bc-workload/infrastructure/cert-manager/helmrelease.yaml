@@ -1,0 +1,106 @@
+# flux/clusters/bc-workload/infrastructure/cert-manager/helmrelease.yaml
+# BlueUPALM — cert-manager con solver DNS-01 via GCP Cloud DNS
+#
+# Emite certificados wildcard para navarro-bores.com via Let's Encrypt.
+# DNS-01 challenge: cert-manager modifica registros TXT en Cloud DNS
+# usando Workload Identity (sin credenciales estáticas).
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  interval: 24h
+  url: https://charts.jetstack.io
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: cert-manager
+      version: "v1.14.*"
+      sourceRef:
+        kind: HelmRepository
+        name: cert-manager
+        namespace: cert-manager
+
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+
+  values:
+    # Instalar CRDs automáticamente
+    installCRDs: true
+
+    # Workload Identity: anotación para que el pod use la SA de GCP sin key
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "bc-workload-cert-manager@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+
+    # Prometheus metrics
+    prometheus:
+      enabled: true
+      servicemonitor:
+        enabled: true
+        namespace: observability
+
+    # Pod Security
+    securityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+
+---
+# ── ClusterIssuer: Let's Encrypt Production ────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+spec:
+  acme:
+    # Endpoint de producción de Let's Encrypt
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: "${LETSENCRYPT_EMAIL}"
+    privateKeySecretRef:
+      name: letsencrypt-production-account-key
+
+    solvers:
+      - dns01:
+          cloudDNS:
+            # Proyecto GCP donde está la zona DNS (navarro-bores.com)
+            project: "${GCP_PROJECT_ID}"
+            # Workload Identity — no necesita serviceAccountSecretRef
+            # La SA GCP cert-manager-sa tiene roles/dns.admin
+        selector:
+          dnsZones:
+            - "navarro-bores.com"
+
+---
+# ── Certificate: wildcard para todos los subdominios ─────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: blueupalm-wildcard
+  namespace: networking    # Traefik lee el Secret de este namespace
+spec:
+  secretName: blueupalm-tls-wildcard
+
+  # Renovar 30 días antes de expiración
+  renewBefore: 720h
+
+  dnsNames:
+    - "navarro-bores.com"
+    - "*.navarro-bores.com"
+
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer

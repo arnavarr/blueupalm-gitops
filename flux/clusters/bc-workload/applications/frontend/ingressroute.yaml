@@ -1,0 +1,95 @@
+# flux/clusters/bc-workload/applications/frontend/ingressroute.yaml
+# BlueUPALM — IngressRoute Traefik para el Frontend React
+#
+# Exposición pública: https://blueupalm.navarro-bores.com
+# TLS: wildcard cert *.navarro-bores.com via cert-manager DNS-01 (Let's Encrypt)
+
+---
+# ── IngressRoute principal ─────────────────────────────────────────────────────
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: frontend
+  namespace: applications
+  labels:
+    app: frontend
+    app.kubernetes.io/managed-by: flux
+spec:
+  entryPoints:
+    - websecure    # HTTPS :443
+  routes:
+    # ── Frontend SPA (todas las rutas → index.html) ──────────────────
+    - match: Host(`blueupalm.navarro-bores.com`)
+      kind: Rule
+      services:
+        - name: frontend
+          port: 80
+          namespace: applications
+      middlewares:
+        - name: security-headers
+          namespace: networking
+        - name: rate-limit-frontend
+          namespace: applications
+
+    # ── API edge-security (rutas permitidas: /issue, /revoke, /health) ─
+    # /verify NO está expuesto — solo opera via NATS subject verify.request
+    - match: Host(`blueupalm.navarro-bores.com`) && (PathPrefix(`/api/edge/issue`) || PathPrefix(`/api/edge/revoke`) || PathPrefix(`/api/edge/health`))
+      kind: Rule
+      services:
+        - name: edge-security
+          port: 8080
+          namespace: applications
+      middlewares:
+        - name: strip-edge-prefix
+          namespace: applications
+        - name: rate-limit-issue
+          namespace: networking
+        - name: security-headers
+          namespace: networking
+
+  tls:
+    secretName: blueupalm-tls    # Secret poblado por cert-manager (ClusterIssuer letsencrypt-dns01)
+
+---
+# ── Middleware: eliminar prefijo /api/edge antes de pasar a edge-security ────
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-edge-prefix
+  namespace: applications
+spec:
+  stripPrefix:
+    prefixes:
+      - /api/edge
+
+---
+# ── Middleware: rate-limit específico para el frontend ────────────────────────
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit-frontend
+  namespace: applications
+spec:
+  rateLimit:
+    average: 500    # req/s por IP
+    burst: 100
+
+---
+# ── Redirect HTTP → HTTPS ─────────────────────────────────────────────────────
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: frontend-redirect-http
+  namespace: applications
+spec:
+  entryPoints:
+    - web    # HTTP :80
+  routes:
+    - match: Host(`blueupalm.navarro-bores.com`)
+      kind: Rule
+      services:
+        - name: frontend
+          port: 80
+      middlewares:
+        - name: redirect-to-https
+          namespace: networking

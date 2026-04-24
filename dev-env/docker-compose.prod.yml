@@ -1,0 +1,58 @@
+# dev-env/docker-compose.prod.yml
+#
+# Override de producción con OpenZiti/NetFoundry.
+# MIGRADO DESDE: bc/docker-compose.prod.yml
+#
+# Uso (desde el directorio ./bc):
+#   docker-compose -f docker-compose.yaml -f ../blueupalm-gitops/dev-env/docker-compose.prod.yml up -d
+#
+# Este override:
+#   1. Añade el sidecar ziti-tunnel que conecta las identidades al overlay Ziti.
+#   2. Cambia las URLs de NATS a nats.bc.internal (Dark Service Ziti).
+#   3. Elimina la exposición del puerto 4222 al host.
+#   4. Activa ZITI_ENFORCE para validación estricta de entity-type.
+
+services:
+  # ── Ziti Tunnel Sidecar ──────────────────────────────────────────
+  # Conecta el stack al overlay NetFoundry.
+  # Requiere:
+  #   - ZITI_IDENTITY_FILE: ruta al JSON de identidad generado por setup-ziti-dev.sh
+  #   - Capacidades NET_ADMIN y acceso a /dev/net/tun (para modo host-intercept)
+  ziti-tunnel:
+    image: openziti/ziti-edge-tunnel:latest
+    volumes:
+      - ${ZITI_IDENTITY_FILE:-./ziti/bc-edge-identity.json}:/etc/ziti/identity.json:ro
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    command:
+      - run
+      - --identity=/etc/ziti/identity.json
+      - --verbose=2
+    restart: unless-stopped
+    networks:
+      - bc-internal
+
+  # ── NATS: sin puerto expuesto al host en producción ───────────────
+  # El acceso ocurre exclusivamente a través del Dark Service Ziti.
+  nats:
+    ports: !reset []    # Eliminar todos los ports del compose base
+
+  # ── Edge Security: URL NATS via Ziti, enforce activo ─────────────
+  edge-security:
+    environment:
+      - NATS_URL=nats://nats.bc.internal:4222
+      - ZITI_ENFORCE=true
+    depends_on:
+      ziti-tunnel:
+        condition: service_started
+
+  # ── Ingestor: URL NATS via Ziti ───────────────────────────────────
+  ingestion-agent:
+    environment:
+      - NATS_URL=nats://nats.bc.internal:4222
+    depends_on:
+      ziti-tunnel:
+        condition: service_started

@@ -1,0 +1,183 @@
+# flux/clusters/bc-workload/messaging/nats/helmrelease.yaml
+# BlueUPALM — NATS JetStream Cluster (3 réplicas, anti-affinity DORA)
+#
+# DISEÑO CRÍTICO (confirmado en edge-security/src/main.rs líneas 13-16):
+#   - NATS opera sin TLS nativo — el overlay OpenZiti cifra el canal
+#   - Autenticación: NKey Ed25519 (challenge-response), seeds desde GCP SM
+#   - 3 réplicas en 3 zonas GCE distintas → DORA §6.3 (single point of failure)
+#
+# Streams creados post-deploy via Job:
+#   VERIFY_STREAM  → verify.*, retención 24h
+#   DORA_ALERTS    → dora.alert.>, retención 30d
+#   AUDIT_TRAIL    → audit.>, retención 7 AÑOS (Ley 10/2010 PBC/FT, Art. 25)
+#
+# KV Buckets:
+#   revoked_tokens → TTL 30d (CRL distribuida para tokens Biscuit)
+
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: nats
+  namespace: messaging
+spec:
+  interval: 24h
+  url: https://nats-io.github.io/k8s/helm/charts/
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: nats
+  namespace: messaging
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: nats
+      version: "1.1.*"
+      sourceRef:
+        kind: HelmRepository
+        name: nats
+        namespace: messaging
+
+  values:
+    config:
+      cluster:
+        enabled: true
+        replicas: 3
+        name: "blueupalm-cluster"
+
+      jetstream:
+        enabled: true
+        fileStore:
+          enabled: true
+          pvc:
+            enabled: true
+            size: 10Gi
+            storageClassName: premium-rwo    # SSD para NATS JetStream persistence
+
+      # ── Configuración basada en /bc/config/nats.conf ───────────────────
+      # Sin TLS nativo — OpenZiti provee el cifrado del overlay (main.rs:15-16)
+      merge:
+        server_name: "blueupalm-cluster"
+        max_payload: 8MB
+        max_connections: 1000
+        # Monitoring HTTP solo interno (no expuesto vía Ingress)
+        http_port: 8222
+
+        # ── NKey ACLs (seeds inyectados desde GCP SM via External Secrets)
+        # La restricción por subjects se implementa aquí:
+        #   ingestor: publish verify.request, subscribe verify.success/denied
+        #   edge-security: subscribe verify.request, publish verify.success/denied/dora.alert.*
+        authorization:
+          users:
+            - nkey: "$NATS_NKEY_EDGE_PUBLIC"
+              permissions:
+                subscribe: ["verify.request"]
+                publish: ["verify.success", "verify.denied", "dora.alert.>", "audit.>"]
+            - nkey: "$NATS_NKEY_INGESTOR_PUBLIC"
+              permissions:
+                publish: ["verify.request", "triage.request", "audit.>"]
+                subscribe: ["verify.success", "verify.denied", "triage.response.>"]
+
+    # ── StatefulSet anti-affinity por nodo (DORA compliance) ──────────────
+    statefulSet:
+      annotations:
+        compliance: dora-nats-ha
+
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 2    # Tolerar pérdida de 1 nodo manteniendo quórum NATS
+
+    affinity:
+      podAntiAffinity:
+        # OBLIGATORIO: cada réplica NATS en nodo físico distinto
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: nats
+            topologyKey: kubernetes.io/hostname
+
+    # ── Prometheus ServiceMonitor ─────────────────────────────────────────
+    promExporter:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        namespace: observability
+
+---
+# ── Job: Inicialización de Streams y KV Buckets ───────────────────────────────
+# Se ejecuta UNA VEZ tras el despliegue del StatefulSet NATS.
+# Crea los streams con las retenciones regulatorias correctas.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nats-init-streams
+  namespace: messaging
+  annotations:
+    # Helm hook: ejecutar después de que el chart esté instalado
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: nats-cli
+          image: natsio/nats-box:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              NATS_URL="nats://nats.messaging.svc.cluster.local:4222"
+
+              echo "=== BlueUPALM: Inicializando NATS JetStream Streams ==="
+
+              # ── VERIFY_STREAM: pipeline de verificación de tokens ──────────
+              nats --server "$NATS_URL" stream add VERIFY_STREAM \
+                --subjects "verify.*" \
+                --retention limits \
+                --max-age 24h \
+                --replicas 3 \
+                --storage file \
+                --discard old \
+                --dupe-window 2m 2>/dev/null || \
+              nats --server "$NATS_URL" stream info VERIFY_STREAM
+              echo "✅ VERIFY_STREAM OK (retención 24h, 3 réplicas)"
+
+              # ── DORA_ALERTS: alertas operativas (Art. 17 Reglamento DORA) ──
+              nats --server "$NATS_URL" stream add DORA_ALERTS \
+                --subjects "dora.alert.>" \
+                --retention limits \
+                --max-age 720h \
+                --replicas 3 \
+                --storage file \
+                --discard old 2>/dev/null || \
+              nats --server "$NATS_URL" stream info DORA_ALERTS
+              echo "✅ DORA_ALERTS OK (retención 30d, 3 réplicas)"
+
+              # ── AUDIT_TRAIL: registro inmutable regulatorio ─────────────────
+              # Retención: 7 AÑOS = 61320 horas (Ley 10/2010 PBC/FT, Art. 25)
+              # Storage: file (disk) — obligatorio para persistencia larga duración
+              nats --server "$NATS_URL" stream add AUDIT_TRAIL \
+                --subjects "audit.>" \
+                --retention limits \
+                --max-age 61320h \
+                --replicas 3 \
+                --storage file \
+                --discard old 2>/dev/null || \
+              nats --server "$NATS_URL" stream info AUDIT_TRAIL
+              echo "✅ AUDIT_TRAIL OK (retención 7 años, 3 réplicas)"
+
+              # ── KV Bucket: revoked_tokens (CRL distribuida Biscuit) ─────────
+              nats --server "$NATS_URL" kv add revoked_tokens \
+                --ttl 720h \
+                --replicas 3 \
+                --storage file 2>/dev/null || \
+              nats --server "$NATS_URL" kv info revoked_tokens
+              echo "✅ KV revoked_tokens OK (TTL 30d, 3 réplicas)"
+
+              echo "=== Inicialización NATS completada ==="
