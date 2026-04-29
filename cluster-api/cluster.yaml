@@ -1,43 +1,32 @@
 # cluster-api/cluster.yaml
 # BlueUPALM — Workload Cluster: GCPCluster + Cluster (CAPI/CAPG)
-#
-# Este manifiesto define el cluster "bc-workload" sobre VMs GCE (no-GKE).
-# Aplica con: kubectl apply -f cluster-api/ --kubeconfig ~/.kube/blueupalm-mgmt.yaml
-#
-# PREREQUISITOS:
-#   - Cluster API + CAPG inicializados (bootstrap/02-init-capg.sh)
-#   - Variables de entorno: GCP_PROJECT_ID, GCP_REGION, GCP_NETWORK_NAME
-
----
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   name: bc-workload
   namespace: default
   labels:
-    # Etiquetas para identificación en demo
     project: blueupalm
     environment: demo
     compliance: dora-pbc-ft
 spec:
-  # Red del cluster — rangos deben coincidir con la subnet de Terraform
   clusterNetwork:
     pods:
       cidrBlocks: ["10.1.0.0/16"]
     services:
       cidrBlocks: ["10.2.0.0/20"]
-
-  # Referencia al proveedor de infraestructura (GCP)
-  infrastructureRef:
-    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-    kind: GCPCluster
-    name: bc-workload
-
-  # Referencia al Control Plane (kubeadm)
+  
+  # Referencia al plano de control (Kubeadm)
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta1
     kind: KubeadmControlPlane
     name: bc-workload-control-plane
+
+  # Referencia a la infraestructura (GCP)
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: GCPCluster
+    name: bc-workload
 
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
@@ -46,7 +35,6 @@ metadata:
   name: bc-workload
   namespace: default
 spec:
-  # Proyecto y región GCP (sustituir con valores reales)
   project: "${GCP_PROJECT_ID}"
   region: "${GCP_REGION}"
 
@@ -57,15 +45,13 @@ spec:
       - name: "blueupalm-subnet-${GCP_REGION}"
         region: "${GCP_REGION}"
         cidrBlock: "10.0.0.0/20"
-        secondaryIpRanges:
-          - name: pods
-            cidrBlock: "10.1.0.0/16"
-          - name: services
-            cidrBlock: "10.2.0.0/20"
+        secondaryCidrBlocks:
+          pods: "10.1.0.0/16"
+          services: "10.2.0.0/20"
 
   # Load Balancer para el kube-apiserver del Control Plane
-  controlPlaneLoadBalancer:
-    loadBalancerType: Internal    # Internal LB — el API server no se expone a internet
+  loadBalancer:
+    loadBalancerType: Internal    # Revertido a Internal para cumplimiento DORA/PBC-FT (Hardening)
 
   # Service Account para los nodos (creada por módulo IAM de Terraform)
   additionalLabels:

@@ -10,11 +10,22 @@ variable "project_id"   { type = string }
 variable "domain_name"  { type = string }
 variable "ingress_ip"   { type = string }
 
+# ⚠️  CRÍTICO: PROTECCIÓN DE DNS ──────────────────────────────────────────────────
+# La eliminación de esta zona o sus registros AFECTARÁ al correo electrónico y 
+# al portal principal del dominio navarro-bores.com. 
+# NUNCA ejecutar 'terraform destroy' sobre este módulo sin respaldo verificado.
+# ─────────────────────────────────────────────────────────────────────────────
+
 resource "google_dns_managed_zone" "blueupalm" {
   name        = "blueupalm-zone"
   dns_name    = "${var.domain_name}."
   project     = var.project_id
   description = "Zona DNS para BlueUPALM — cert-manager DNS-01 + registros A del Ingress"
+
+  # Evitar borrado accidental de la zona completa
+  lifecycle {
+    prevent_destroy = true
+  }
 
   # Logging de queries DNS para auditoría (requerido por DORA)
   cloud_logging_config {

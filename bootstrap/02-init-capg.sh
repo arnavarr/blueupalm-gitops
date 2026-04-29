@@ -39,6 +39,7 @@ export KUBECONFIG="$MGMT_KUBECONFIG"
 # ── Verificar credenciales CAPG generadas por Terraform ──────────────────────
 [ -f "$CAPG_CREDENTIALS" ] || error "capg-credentials.json no encontrado. Ejecutar terraform apply primero."
 export GOOGLE_APPLICATION_CREDENTIALS="$CAPG_CREDENTIALS"
+export GCP_B64ENCODED_CREDENTIALS=$(base64 -i "$CAPG_CREDENTIALS" | tr -d '\n')
 
 # ── Variables CAPG requeridas ─────────────────────────────────────────────────
 export GCP_PROJECT_ID

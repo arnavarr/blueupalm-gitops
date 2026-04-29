@@ -39,6 +39,7 @@ echo ""
 
 # ── Crear VM temporal de construcción ─────────────────────────────────────────
 info "Creando VM temporal de construcción..."
+BUILDER_SA="bc-workload-capg@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 gcloud compute instances create "$BUILDER_VM" \
     --project="$GCP_PROJECT_ID" \
     --zone="$GCP_ZONE" \
@@ -48,6 +49,7 @@ gcloud compute instances create "$BUILDER_VM" \
     --boot-disk-size=50GB \
     --boot-disk-type=pd-ssd \
     --metadata=enable-oslogin=true \
+    --service-account="$BUILDER_SA" \
     --scopes=cloud-platform
 
 # Esperar a que SSH esté disponible
@@ -169,7 +171,7 @@ gcloud compute images create "$IMAGE_NAME" \
     --source-disk-zone="$GCP_ZONE" \
     --family="blueupalm-k8s-node" \
     --description="BlueUPALM K8s node: Ubuntu 22.04 + kubeadm v${K8S_VERSION} + containerd + gVisor + Kata" \
-    --labels="k8s-version=v${K8S_VERSION},project=blueupalm,runtime=gvisor-kata"
+    --labels="k8s-version=${K8S_VERSION//./-},project=blueupalm,runtime=gvisor-kata"
 
 # ── Limpiar VM temporal ───────────────────────────────────────────────────────
 info "Eliminando VM temporal de construcción..."

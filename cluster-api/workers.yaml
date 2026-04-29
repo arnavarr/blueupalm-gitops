@@ -1,43 +1,25 @@
 # cluster-api/workers.yaml
 # BlueUPALM — Workers: MachineDeployment + GCPMachineTemplate
-#
-# 3 réplicas e2-standard-4 distribuidas en 3 zonas de europe-west1.
-# REQUISITO DORA: cada worker en zona distinta → NATS JetStream HA garantizada.
-# Disco adicional /dev/sdb (200GB) por worker para Rook-Ceph.
-
----
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
   name: bc-workload-workers
   namespace: default
-  labels:
-    project: blueupalm
-    role: worker
 spec:
+  replicas: 3
   clusterName: bc-workload
-  replicas: 3    # Mínimo 3: NATS cluster HA + DORA SLA compliance
-
   selector:
     matchLabels:
       cluster.x-k8s.io/cluster-name: bc-workload
-
   template:
-    metadata:
-      labels:
-        cluster.x-k8s.io/cluster-name: bc-workload
-        role: worker
-
     spec:
       clusterName: bc-workload
-      version: "v1.29.0"
-
+      version: v1.29.0
       bootstrap:
         configRef:
           apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
           kind: KubeadmConfigTemplate
           name: bc-workload-workers
-
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
         kind: GCPMachineTemplate
@@ -54,21 +36,10 @@ spec:
     spec:
       joinConfiguration:
         nodeRegistration:
-          name: "{{ ds.meta_data.local_hostname }}"
+          name: '{{ ds.meta_data.local_hostname }}'
           kubeletExtraArgs:
             cloud-provider: external
-            node-labels: "role=worker"
-
-      # ── Preparar disco Ceph al inicio ──────────────────────────────────────
-      # Rook-Ceph usará /dev/sdb (disco adicional de 200GB) para el OSD.
-      # El disco se deja sin formatear — Rook lo gestiona completamente.
-      preKubeadmCommands:
-        - "wipefs -a /dev/sdb || true"    # Limpiar cualquier firma existente
-        - |
-          # Configurar sysctl para Kubernetes (por si no está en la imagen)
-          sysctl -w net.bridge.bridge-nf-call-iptables=1
-          sysctl -w net.ipv4.ip_forward=1
-          sysctl -w net.bridge.bridge-nf-call-ip6tables=1
+            node-labels: "role=worker,ceph-osd=true"
 
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
@@ -79,20 +50,15 @@ metadata:
 spec:
   template:
     spec:
+      subnet: "blueupalm-subnet-${GCP_REGION}"
       image: "projects/${GCP_PROJECT_ID}/global/images/family/blueupalm-k8s-node"
-      instanceType: "e2-standard-4"    # 4 vCPU, 16GB RAM
-
+      instanceType: "e2-standard-4"
       rootDeviceSize: 100
       rootDeviceType: "pd-ssd"
 
-      # ── Disco adicional para Rook-Ceph (200GB HDD) ────────────────────────
-      # Rook-Ceph identifica discos vacíos automáticamente.
-      # /dev/sda → OS (100GB SSD)
-      # /dev/sdb → Ceph OSD (200GB HDD pd-standard)
       additionalDisks:
         - deviceType: "pd-standard"
-          deviceSize: 200
-          deletionPolicy: Delete      # Borrar con la VM en cleanup
+          size: 200
 
       serviceAccounts:
         email: "${NODES_SA_EMAIL}"
@@ -106,9 +72,3 @@ spec:
 
       additionalNetworkTags:
         - "bc-workload-node"
-
-      # ── Distribución en zonas para NATS anti-affinity ─────────────────────
-      # CAPG distribuye automáticamente las réplicas por zonas de la región.
-      # En conjunto con el PodAntiAffinity del StatefulSet NATS, garantiza
-      # que cada réplica NATS corre en un nodo físico diferente (DORA §6.3).
-      failureDomain: "${GCP_REGION}"

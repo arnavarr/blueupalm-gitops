@@ -8,10 +8,24 @@
 #     En producción, generarlos con: nsc generate nkey -u
 #   - NUNCA loguear estos valores. Terraform los marca como sensitive.
 
-variable "project_id"           { type = string }
-variable "keycloak_admin_pass"  { type = string; sensitive = true }
-variable "postgres_pass"        { type = string; sensitive = true }
-variable "qdrant_api_key"       { type = string; sensitive = true }
+variable "project_id" {
+  type = string
+}
+
+variable "keycloak_admin_pass" {
+  type      = string
+  sensitive = true
+}
+
+variable "postgres_pass" {
+  type      = string
+  sensitive = true
+}
+
+variable "qdrant_api_key" {
+  type      = string
+  sensitive = true
+}
 
 # ── Helper: generación de valores random para demo ────────────────────────────
 resource "random_password" "spire_join_token" {

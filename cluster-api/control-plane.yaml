@@ -1,48 +1,43 @@
 # cluster-api/control-plane.yaml
 # BlueUPALM — Control Plane: KubeadmControlPlane + GCPMachineTemplate
-#
-# 1 réplica e2-standard-4 en europe-west1-b
-# kubeadm configurado para Cilium (sin kube-proxy) + feature gates
-
----
 apiVersion: controlplane.cluster.x-k8s.io/v1beta1
 kind: KubeadmControlPlane
 metadata:
   name: bc-workload-control-plane
   namespace: default
 spec:
-  replicas: 1    # Demo: 1 CP. Producción: 3 réplicas para HA
-
-  version: "v1.29.0"
-
+  replicas: 1
+  version: v1.29.0
   machineTemplate:
     infrastructureRef:
       apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
       kind: GCPMachineTemplate
       name: bc-workload-control-plane
-
+  
   kubeadmConfigSpec:
-    # ── Init Configuration ──────────────────────────────────────────────────
     initConfiguration:
       nodeRegistration:
-        name: "{{ ds.meta_data.local_hostname }}"
+        name: '{{ ds.meta_data.local_hostname }}'
         kubeletExtraArgs:
-          # Cilium sustituye kube-proxy — no iniciarlo
+          cloud-provider: external
+          node-labels: "role=control-plane"
+    
+    joinConfiguration:
+      nodeRegistration:
+        name: '{{ ds.meta_data.local_hostname }}'
+        kubeletExtraArgs:
           cloud-provider: external
           node-labels: "role=control-plane"
 
-    # ── Cluster Configuration ───────────────────────────────────────────────
     clusterConfiguration:
       apiServer:
         extraArgs:
-          # Feature gates para APIs avanzadas
           runtime-config: "api/all=true"
-          # Auditoría para cumplimiento DORA/PBC-FT
           audit-log-path: /var/log/kube-apiserver-audit.log
           audit-log-maxage: "30"
           audit-log-maxbackup: "3"
           audit-log-maxsize: "100"
-          # OIDC para integración con Dex → Keycloak
+          # OIDC configurado para Dex
           oidc-issuer-url: "https://dex.bc-workload.svc.cluster.local"
           oidc-client-id: "kubernetes"
           oidc-username-claim: "email"
@@ -53,32 +48,23 @@ spec:
             mountPath: /var/log
             readOnly: false
             pathType: DirectoryOrCreate
-
+      
       controllerManager:
         extraArgs:
           cloud-provider: external
           bind-address: "0.0.0.0"
-
+      
       etcd:
         local:
           extraArgs:
-            # Métricas etcd para Prometheus
             listen-metrics-urls: "http://0.0.0.0:2381"
-
+      
       networking:
         podSubnet: "10.1.0.0/16"
         serviceSubnet: "10.2.0.0/20"
         dnsDomain: "cluster.local"
 
-    # ── Join Configuration (para réplicas CP adicionales) ──────────────────
-    joinConfiguration:
-      nodeRegistration:
-        name: "{{ ds.meta_data.local_hostname }}"
-        kubeletExtraArgs:
-          cloud-provider: external
-          node-labels: "role=control-plane"
-
-    # ── Archivos adicionales en el nodo ────────────────────────────────────
+    # Archivos adicionales (auditoría, etc.)
     files:
       - path: /etc/kubernetes/audit-policy.yaml
         owner: "root:root"
@@ -88,15 +74,12 @@ spec:
           apiVersion: audit.k8s.io/v1
           kind: Policy
           rules:
-          # Loguear operaciones sobre secretos con detalle máximo
           - level: RequestResponse
             resources:
             - group: ""
               resources: ["secrets"]
-          # Loguear operaciones administrativas
           - level: Metadata
             verbs: ["delete", "deletecollection", "create", "update", "patch"]
-          # Sin auditoría para lecturas de recursos no sensibles
           - level: None
             verbs: ["get", "list", "watch"]
             resources:
@@ -112,15 +95,14 @@ metadata:
 spec:
   template:
     spec:
-      # Imagen GCE custom creada por bootstrap/03-build-gce-image.sh
+      subnet: "blueupalm-subnet-${GCP_REGION}"
       image: "projects/${GCP_PROJECT_ID}/global/images/family/blueupalm-k8s-node"
-      instanceType: "e2-standard-4"    # 4 vCPU, 16GB RAM
-
-      rootDeviceSize: 100              # Disco OS 100GB SSD
+      instanceType: "e2-standard-4"
+      rootDeviceSize: 100
       rootDeviceType: "pd-ssd"
-
+      
       serviceAccounts:
-        email: "${NODES_SA_EMAIL}"     # SA mínima de Terraform (outputs.tf)
+        email: "${NODES_SA_EMAIL}"
         scopes:
           - "https://www.googleapis.com/auth/cloud-platform"
 
@@ -129,5 +111,4 @@ spec:
         project: blueupalm
 
       additionalNetworkTags:
-        - "bc-workload-control-plane"
         - "bc-workload-node"

@@ -83,12 +83,13 @@ resource "google_project_iam_member" "external_secrets_sm_reader" {
 
 # ── Workload Identity Binding (ESO → SA GCP) ──────────────────────────────────
 # Permite que el ServiceAccount de K8s `external-secrets/external-secrets`
-# impersone la SA de GCP sin credenciales estáticas (keyless auth)
-resource "google_service_account_iam_member" "external_secrets_wi" {
-  service_account_id = google_service_account.external_secrets.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets/external-secrets]"
-}
+# impersona la SA de GCP sin credenciales estáticas (keyless auth)
+# NOTA: Deshabilitado temporalmente hasta que el pool .svc.id.goog esté disponible o se use Federation.
+# resource "google_service_account_iam_member" "external_secrets_wi" {
+#   service_account_id = google_service_account.external_secrets.name
+#   role               = "roles/iam.workloadIdentityUser"
+#   member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets/external-secrets]"
+# }
 
 # ── Service Account: cert-manager (DNS-01 solver para Cloud DNS) ───────────────
 resource "google_service_account" "cert_manager" {
@@ -104,11 +105,11 @@ resource "google_project_iam_member" "cert_manager_dns_admin" {
   member  = "serviceAccount:${google_service_account.cert_manager.email}"
 }
 
-resource "google_service_account_iam_member" "cert_manager_wi" {
-  service_account_id = google_service_account.cert_manager.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[cert-manager/cert-manager]"
-}
+# resource "google_service_account_iam_member" "cert_manager_wi" {
+#   service_account_id = google_service_account.cert_manager.name
+#   role               = "roles/iam.workloadIdentityUser"
+#   member             = "serviceAccount:${var.project_id}.svc.id.goog[cert-manager/cert-manager]"
+# }
 
 # ── Clave JSON para CAPG (clusterctl necesita credenciales en bootstrap) ───────
 resource "google_service_account_key" "capg_key" {

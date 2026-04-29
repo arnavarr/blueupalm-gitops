@@ -4,6 +4,17 @@
 >
 > Gestionado por **Flux CD**. El código fuente de las aplicaciones vive en [`arnavarr/bc`](https://github.com/arnavarr/bc).
 
+## Advertencia Crítica de Infraestructura
+
+> [!CAUTION]
+> **PROTECCIÓN DE DNS (navarro-bores.com)**
+> La zona DNS gestionada en Google Cloud Platform es la base del correo electrónico y del portal principal `navarro-bores.com`.
+> - **NO** eliminar la zona `blueupalm-zone` sin verificar el impacto en los servicios existentes.
+> - El módulo Terraform tiene activado `prevent_destroy = true` para evitar accidentes.
+> - Cualquier modificación de registros MX o registros A base debe ser consultada previamente.
+
+---
+
 ## Arquitectura
 
 ```
