@@ -22,20 +22,22 @@ spec:
       talosVersion: v1.7.6
       # Parches aplicados sobre el MachineConfig base
       configPatches:
-        # Extensiones del sistema (gVisor + Kata)
-        - op: add
-          path: /machine/install/extensions
-          value:
-            - image: ghcr.io/siderolabs/gvisor:20240101.0
-            - image: ghcr.io/siderolabs/kata-containers:3.4.0
-        # Audit log para cumplimiento DORA
-        - op: add
-          path: /cluster/apiServer/extraArgs
-          value:
-            audit-log-path: /var/log/kube-apiserver-audit.log
-            audit-log-maxage: "30"
-            audit-log-maxbackup: "3"
-            audit-log-maxsize: "100"
+        # Extensiones del sistema (gVisor + Kata) — se añaden post-bootstrap via upgrade
+        # Requieren imagen Talos con extensiones pre-incluidas o upgrade del sistema
+        # - op: add
+        #   path: /machine/install/extensions
+        #   value:
+        #     - image: ghcr.io/siderolabs/gvisor:20240101.0
+        #     - image: ghcr.io/siderolabs/kata-containers:3.4.0
+        # Audit log para cumplimiento DORA — se configura post-bootstrap via MachineConfig
+        # El path /var/log requiere extraVolumes correctos; se añade en fase 2
+        # - op: add
+        #   path: /cluster/apiServer/extraArgs
+        #   value:
+        #     audit-log-path: /var/log/kube-apiserver-audit.log
+        #     audit-log-maxage: "30"
+        #     audit-log-maxbackup: "3"
+        #     audit-log-maxsize: "100"
         # CNI: ninguno — Cilium lo instala Flux
         # Usar add sobre /cluster/network para asegurar que cni.name=none aunque no exista el path
         - op: add
