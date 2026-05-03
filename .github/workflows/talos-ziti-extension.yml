@@ -85,8 +85,12 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
 
       - name: Build Talos installer image with extension
-        # Genera la imagen de Talos personalizada con la extensión Ziti incluida
-        # Esta imagen se puede usar directamente en el MachineConfig
+        # Opcional: genera la imagen de Talos personalizada con la extensión incluida.
+        # Requiere /dev/loop (privilegios bloque para squashfs) — puede no estar
+        # disponible en todos los runners. Si falla, la extensión OCI en GHCR
+        # es suficiente para referenciarse en el MachineConfig.
+        continue-on-error: true
+        timeout-minutes: 10
         run: |
           docker run --rm \
             -v /dev:/dev --privileged \
