@@ -81,7 +81,7 @@ module "cloud_dns" {
   ingress_ip  = google_compute_global_address.ingress_ip.address
 }
 
-# ── Habilitar APIs de GCP requeridas ─────────────────────────────────────────
+# ── Habilitar APIs de GCP requeridas ───────────────────────────────────────────────
 resource "google_project_service" "apis" {
   for_each = toset([
     "compute.googleapis.com",
@@ -93,6 +93,7 @@ resource "google_project_service" "apis" {
     "storage.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
+    "cloudkms.googleapis.com",     # Fase 4: cifrado identidades Ziti + DR backups
   ])
 
   project            = var.gcp_project_id
@@ -100,7 +101,7 @@ resource "google_project_service" "apis" {
   disable_on_destroy = false
 }
 
-# ── Guardar credenciales CAPG para bootstrap ──────────────────────────────────
+# ── Guardar credenciales CAPG para bootstrap ──────────────────────────────────────
 # El archivo se usa en bootstrap/02-init-capg.sh como GOOGLE_APPLICATION_CREDENTIALS
 resource "local_file" "capg_credentials" {
   content         = base64decode(module.iam.capg_key_b64)
@@ -111,4 +112,21 @@ resource "local_file" "capg_credentials" {
   lifecycle {
     ignore_changes = [content]
   }
+}
+
+# ── Módulo Security Hardening (Fase 4 — Zero-Trust Control Plane) ────────────────
+# Crea: KMS KeyRing/Keys (Ziti identity + DR), GCS bucket DR, firewall Zero-Trust
+module "security_hardening" {
+  source       = "./modules/security-hardening"
+  project_id   = var.gcp_project_id
+  region       = var.gcp_region
+  cluster_name = var.workload_cluster_name
+  vpc_name     = module.vpc.network_name
+  nodes_sa_email = module.iam.nodes_sa_email
+
+  depends_on = [
+    google_project_service.apis,
+    module.vpc,
+    module.iam,
+  ]
 }
