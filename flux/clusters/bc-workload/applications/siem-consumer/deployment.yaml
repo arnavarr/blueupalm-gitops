@@ -1,0 +1,83 @@
+# flux/clusters/bc-workload/applications/siem-consumer/deployment.yaml
+# BlueUPALM — SIEM Consumer (Python)
+#
+# Consume alertas DORA del stream `dora.alert.>` en NATS JetStream
+# y las exporta en formato CEF al SIEM externo del cliente.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: siem-consumer
+  namespace: applications
+  labels:
+    app: siem-consumer
+    app.kubernetes.io/managed-by: flux
+    compliance: dora-pbc-ft
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: siem-consumer
+  template:
+    metadata:
+      labels:
+        app: siem-consumer
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: siem-consumer
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: siem-consumer
+          image: ghcr.io/arnavarr/bc-siem-consumer:latest # {"$imagepolicy": "flux-system:bc-siem-consumer"}
+          env:
+            # ── NATS ─────────────────────────────────────────────────────────
+            - name: NATS_URL
+              value: "nats://nats.messaging.svc.cluster.local:4222"
+            - name: NATS_NKEY_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: nats-nkey-seed-siem
+                  key: seed
+            - name: NATS_STREAM
+              value: "DORA_ALERTS"
+            - name: NATS_SUBJECT
+              value: "dora.alert.>"
+            - name: NATS_CONSUMER_NAME
+              value: "siem-consumer"
+
+            # ── SIEM externo (UDP CEF syslog) ─────────────────────────────────
+            - name: SIEM_HOST
+              value: "siem.external.example.com"
+            - name: SIEM_PORT
+              value: "514"
+            - name: SIEM_PROTOCOL
+              value: "UDP"
+            - name: LOG_LEVEL
+              value: "INFO"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: siem-consumer
+  namespace: applications

@@ -1,0 +1,36 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-triage-agent-netpol
+  namespace: applications
+spec:
+  podSelector:
+    matchLabels:
+      app: ai-triage-agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []   # No recibe tráfico directo — solo opera via NATS
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: messaging
+      ports:
+        - port: 4222
+    # → Google AI API (Gemini)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP

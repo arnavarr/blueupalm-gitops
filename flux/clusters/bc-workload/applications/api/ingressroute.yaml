@@ -1,0 +1,27 @@
+# flux/clusters/bc-workload/applications/api/ingressroute.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: bc-api
+  namespace: applications
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`blueupalm.navarro-bores.com`) && PathPrefix(`/api`)
+      kind: Rule
+      services:
+        - name: bc-api
+          port: 8000
+    - match: Host(`blueupalm.navarro-bores.com`) && PathPrefix(`/docs`)
+      kind: Rule
+      services:
+        - name: bc-api
+          port: 8000
+    - match: Host(`blueupalm.navarro-bores.com`) && PathPrefix(`/health`)
+      kind: Rule
+      services:
+        - name: bc-api
+          port: 8000
+  tls:
+    certResolver: letsencrypt

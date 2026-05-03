@@ -1,0 +1,18 @@
+# flux/clusters/bc-workload/applications/kustomization.yaml
+# Kustomization raíz de la capa Applications.
+# Flux lee este archivo al apuntar a `path: ./clusters/bc-workload/applications`
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # ── YAMLs sueltos en applications/ ─────────────────────────────────────────
+  - image-automation.yaml
+  - runtimeclasses.yaml
+
+  # ── Subdirectorios por servicio ─────────────────────────────────────────────
+  - edge-security/
+  - ingestion-agent/
+  - frontend/
+  - api/
+  - ai-triage-agent/
+  - siem-consumer/
+  - seed-job/

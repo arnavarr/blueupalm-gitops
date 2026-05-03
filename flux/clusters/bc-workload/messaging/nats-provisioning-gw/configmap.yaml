@@ -1,0 +1,53 @@
+# Monta la configuración del leaf node en el pod
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-provisioning-gw-config
+  namespace: messaging
+data:
+  provisioning-gateway.conf: |
+    server_name: "nats-provisioning-gw"
+    websocket {
+      port: 9443
+      tls {
+        cert_file: "/etc/nats/tls/tls.crt"
+        key_file:  "/etc/nats/tls/tls.key"
+        ca_file:   "/etc/nats/tls/ca.crt"
+        verify: false
+      }
+      no_tls: false
+    }
+    authorization {
+      users = [
+        {
+          nkey: "${PROVISIONING_DESKTOP_NKEY_PUB}"
+          permissions: {
+            publish:   { allow: ["provisioning.request", "provisioning.status.>", "provisioning.enrolled", "_INBOX.>"] }
+            subscribe: { allow: ["_INBOX.>"] }
+          }
+        }
+      ]
+      timeout: 2
+    }
+    leaf {
+      remotes = [
+        {
+          urls: ["nats://nats-headless.messaging.svc.cluster.local:7422"]
+          tls {
+            cert_file: "/etc/nats/tls/tls.crt"
+            key_file:  "/etc/nats/tls/tls.key"
+            ca_file:   "/etc/nats/tls/ca.crt"
+            verify: true
+          }
+          credentials: "/etc/nats/creds/leaf.creds"
+          deny_imports: [">"]
+          allow_imports: ["provisioning.>", "_INBOX.>"]
+          deny_exports: [">"]
+          allow_exports: ["provisioning.>", "_INBOX.>"]
+        }
+      ]
+    }
+    max_connections: 100
+    max_payload: 65536
+    ping_interval: "60s"
+    write_deadline: "10s"

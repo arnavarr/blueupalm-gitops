@@ -1,0 +1,146 @@
+# flux/clusters/bc-workload/applications/api/deployment.yaml
+# BlueUPALM — API (Python/FastAPI)
+# 
+# Endpoints REST + WebSocket para el frontend AML.
+# Auth: Keycloak OIDC (JWKS). Base de datos: PostgreSQL.
+# NATS: suscripción a eventos de negocio para notificaciones RT.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bc-api
+  namespace: applications
+  labels:
+    app: bc-api
+    app.kubernetes.io/managed-by: flux
+    compliance: dora-pbc-ft
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bc-api
+  template:
+    metadata:
+      labels:
+        app: bc-api
+        spiffe-svid: "true"
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: bc-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+
+      containers:
+        - name: api
+          image: ghcr.io/arnavarr/bc-api:latest # {"$imagepolicy": "flux-system:bc-api"}
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+
+          env:
+            # ── Base de datos (PostgreSQL en namespace data) ──────────────────
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-api-credentials
+                  key: url
+
+            # ── NATS (via overlay OpenZiti) ───────────────────────────────────
+            - name: NATS_URL
+              value: "nats://nats.messaging.svc.cluster.local:4222"
+            - name: NATS_NKEY_SEED_PROVISIONING_SERVICE
+              valueFrom:
+                secretKeyRef:
+                  name: nats-nkey-seed-api
+                  key: seed
+
+            # ── Keycloak OIDC ─────────────────────────────────────────────────
+            - name: KEYCLOAK_URL
+              value: "https://auth.navarro-bores.com"
+            - name: KEYCLOAK_REALM
+              value: "blueupalm"
+            - name: KEYCLOAK_CLIENT_ID
+              value: "bc-api"
+
+            # ── NetFoundry (para provisioning) ────────────────────────────────
+            - name: NF_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: netfoundry-credentials
+                  key: client_id
+            - name: NF_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: netfoundry-credentials
+                  key: client_secret
+            - name: NF_NETWORK_ID
+              value: "b82f4619-7b7c-4bad-8259-8bd1128d715a"
+
+            # ── Cifrado JWT de provisioning ───────────────────────────────────
+            - name: PROVISIONING_JWT_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: provisioning-encryption-key
+                  key: key
+
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: ENVIRONMENT
+              value: "production"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 30
+
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bc-api
+  namespace: applications
+  annotations:
+    # SPIRE: identificación de workload para SVIDs
+    spiffe.io/spiffe-id: "spiffe://blueupalm.navarro-bores.com/ns/applications/sa/bc-api"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bc-api
+  namespace: applications
+spec:
+  selector:
+    app: bc-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

@@ -1,0 +1,86 @@
+# Deployment del NATS Provisioning Gateway
+# Imagen oficial NATS — sin modificaciones, toda la config via ConfigMap
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nats-provisioning-gw
+  namespace: messaging
+  labels:
+    app: nats-provisioning-gw
+    component: messaging
+    tier: dmz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nats-provisioning-gw
+  template:
+    metadata:
+      labels:
+        app: nats-provisioning-gw
+        component: messaging
+        tier: dmz
+    spec:
+      # Sin acceso a la red del cluster excepto hacia NATS interno
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          args:
+            - "--config"
+            - "/etc/nats/provisioning-gateway.conf"
+          ports:
+            - name: wss
+              containerPort: 9443
+              protocol: TCP
+          env:
+            - name: PROVISIONING_DESKTOP_NKEY_PUB
+              valueFrom:
+                secretKeyRef:
+                  name: nats-provisioning-gw-secret
+                  key: PROVISIONING_DESKTOP_NKEY_PUB
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
+            - name: tls
+              mountPath: /etc/nats/tls
+              readOnly: true
+            - name: creds
+              mountPath: /etc/nats/creds
+              readOnly: true
+          resources:
+            requests:
+              cpu:    "50m"
+              memory: "64Mi"
+            limits:
+              cpu:    "200m"
+              memory: "128Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: nats-provisioning-gw-config
+        - name: tls
+          secret:
+            secretName: nats-provisioning-gw-tls
+        - name: creds
+          secret:
+            secretName: nats-provisioning-gw-secret
+            items:
+              - key: leaf.creds
+                path: leaf.creds
+                mode: 0400

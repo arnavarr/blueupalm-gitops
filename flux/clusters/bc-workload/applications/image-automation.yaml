@@ -7,6 +7,11 @@
 # Flujo:
 #   GitHub Actions (bc repo) push → ghcr.io/arnavarr/bc-* → ImagePolicy detecta
 #   → ImageUpdateAutomation hace commit a blueupalm-gitops → Flux sync → K8s rollout
+#
+# ── POLÍTICA DE TAGS (2026-05-03) ──────────────────────────────────────────────
+# Los workflows CI generan tags `sha-XXXXXXX` y `latest`.
+# ImagePolicy usa patrón glob `sha-*` para detectar nuevas imágenes.
+# Cuando se migre a semver en CI, cambiar a policy.semver.range ">=0.1.0"
 
 ---
 # ── ImageRepository: edge-security ────────────────────────────────────────────
@@ -19,10 +24,10 @@ spec:
   image: ghcr.io/arnavarr/bc-edge-security
   interval: 5m
   secretRef:
-    name: ghcr-auth    # imagePullSecret con GITHUB_TOKEN (ExternalSecret desde GCP SM)
+    name: ghcr-auth
 
 ---
-# ── ImagePolicy: edge-security (semver >= 0.1.0) ──────────────────────────────
+# ── ImagePolicy: edge-security (sha-* glob) ────────────────────────────────────
 apiVersion: image.toolkit.fluxcd.io/v1beta2
 kind: ImagePolicy
 metadata:
@@ -32,8 +37,10 @@ spec:
   imageRepositoryRef:
     name: bc-edge-security
   policy:
-    semver:
-      range: ">=0.1.0"    # En desarrollo: usar ">=0.0.0-0" para prereleases
+    alphabetical:
+      order: asc    # sha-XXXXXXX → ordena alfabéticamente, más reciente al final
+  filterTags:
+    pattern: '^sha-[a-f0-9]+'
 
 ---
 # ── ImageRepository: ingestion-agent ─────────────────────────────────────────
@@ -59,8 +66,10 @@ spec:
   imageRepositoryRef:
     name: bc-ingestion-agent
   policy:
-    semver:
-      range: ">=0.1.0"
+    alphabetical:
+      order: asc
+  filterTags:
+    pattern: '^sha-[a-f0-9]+'
 
 ---
 # ── ImageRepository: frontend ─────────────────────────────────────────────────
@@ -86,8 +95,68 @@ spec:
   imageRepositoryRef:
     name: bc-frontend
   policy:
-    semver:
-      range: ">=0.1.0"
+    alphabetical:
+      order: asc
+  filterTags:
+    pattern: '^sha-[a-f0-9]+'
+
+---
+# ── ImageRepository: bc-api ───────────────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: bc-api
+  namespace: flux-system
+spec:
+  image: ghcr.io/arnavarr/bc-api
+  interval: 5m
+  secretRef:
+    name: ghcr-auth
+
+---
+# ── ImagePolicy: bc-api ───────────────────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: bc-api
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: bc-api
+  policy:
+    alphabetical:
+      order: asc
+  filterTags:
+    pattern: '^sha-[a-f0-9]+'
+
+---
+# ── ImageRepository: ai-triage-agent ─────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: bc-ai-triage-agent
+  namespace: flux-system
+spec:
+  image: ghcr.io/arnavarr/bc-ai-triage-agent
+  interval: 5m
+  secretRef:
+    name: ghcr-auth
+
+---
+# ── ImagePolicy: ai-triage-agent ─────────────────────────────────────────────
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: bc-ai-triage-agent
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: bc-ai-triage-agent
+  policy:
+    alphabetical:
+      order: asc
+  filterTags:
+    pattern: '^sha-[a-f0-9]+'
 
 ---
 # ── ImageUpdateAutomation: commit automático al detectar nueva imagen ─────────
@@ -100,7 +169,7 @@ spec:
   interval: 5m
   sourceRef:
     kind: GitRepository
-    name: flux-system    # Repositorio blueupalm-gitops
+    name: flux-system
   git:
     checkout:
       ref:
@@ -118,4 +187,4 @@ spec:
     push:
       branch: main
   update:
-    strategy: Setters    # Usa comentarios # {"$imagepolicy": "flux-system:bc-*"} en los deployments
+    strategy: Setters

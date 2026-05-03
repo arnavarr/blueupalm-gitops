@@ -1,0 +1,17 @@
+# Service interno — el tráfico externo entra via Traefik IngressRouteTCP
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats-provisioning-gw
+  namespace: messaging
+  labels:
+    app: nats-provisioning-gw
+spec:
+  selector:
+    app: nats-provisioning-gw
+  ports:
+    - name: wss
+      port: 9443
+      targetPort: 9443
+      protocol: TCP
+  type: ClusterIP

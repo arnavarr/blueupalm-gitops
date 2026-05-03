@@ -1,0 +1,89 @@
+# flux/clusters/bc-workload/applications/ai-triage-agent/deployment.yaml
+# BlueUPALM — AI Triage Agent (Rust)
+#
+# Escucha alertas AML en NATS, llama a Gemini 2.5 Flash para evaluación
+# autónoma de riesgo y publica decisión de triaje en dora.alert.>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-triage-agent
+  namespace: applications
+  labels:
+    app: ai-triage-agent
+    app.kubernetes.io/managed-by: flux
+    compliance: dora-pbc-ft
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-triage-agent
+  template:
+    metadata:
+      labels:
+        app: ai-triage-agent
+        spiffe-svid: "true"
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: ai-triage-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: ai-triage
+          image: ghcr.io/arnavarr/bc-ai-triage-agent:latest # {"$imagepolicy": "flux-system:bc-ai-triage-agent"}
+          env:
+            # ── NATS ─────────────────────────────────────────────────────────
+            - name: NATS_URL
+              value: "nats://nats.messaging.svc.cluster.local:4222"
+            - name: NATS_NKEY_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: nats-nkey-seed-ai-triage
+                  key: seed
+
+            # ── Gemini 2.5 Flash (API key desde GCP Secret Manager) ──────────
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-api-key
+                  key: key
+            - name: GEMINI_MODEL
+              value: "gemini-2.5-flash"
+
+            # ── Configuración de triaje ───────────────────────────────────────
+            - name: TRIAGE_CONFIDENCE_THRESHOLD
+              value: "0.75"
+            - name: TRIAGE_SUBJECT_SUBSCRIBE
+              value: "triage.request.>"
+            - name: TRIAGE_SUBJECT_PUBLISH
+              value: "triage.result"
+            - name: RUST_LOG
+              value: "info"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-triage-agent
+  namespace: applications
+  annotations:
+    spiffe.io/spiffe-id: "spiffe://blueupalm.navarro-bores.com/ns/applications/sa/ai-triage-agent"

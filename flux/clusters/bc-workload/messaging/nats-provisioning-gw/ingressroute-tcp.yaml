@@ -1,0 +1,22 @@
+# Traefik IngressRouteTCP — TCP passthrough para WSS
+# El TLS termina en el pod NATS (no en Traefik), para mantener el cifrado E2E
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: nats-provisioning-gw-wss
+  namespace: messaging
+  annotations:
+    # cert-manager gestiona el certificado wildcard *.navarro-bores.com
+    # El Secret TLS se monta en el Deployment vía volume 'tls'
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  entryPoints:
+    - websecure   # Puerto 443 del LoadBalancer; Traefik reenvía al 9443 del pod
+  routes:
+    - match: HostSNI(`provisioning.navarro-bores.com`)
+      services:
+        - name: nats-provisioning-gw
+          port: 9443
+  # TCP passthrough — el TLS lo gestiona el pod NATS, no Traefik
+  tls:
+    passthrough: true
