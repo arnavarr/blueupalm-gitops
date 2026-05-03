@@ -9,15 +9,23 @@
 #
 # Arquitectura: docs/architecture/talos-sovereign-stack.md (Sección 5)
 
-variable "project_id"   { type = string }
-variable "region"       { type = string }
-variable "cluster_name" { type = string }
-variable "vpc_name"     { type = string }
+variable "project_id"     { type = string }
+variable "region"         { type = string }
+variable "cluster_name"   { type = string }
+variable "vpc_name"       { type = string }
+variable "nodes_sa_email" { type = string }
 
 # ── KMS KeyRing para cifrado de secretos del cluster ─────────────────────────
 resource "google_kms_key_ring" "blueupalm" {
   name     = "blueupalm"
-  location = "global"
+  location = "global"    # Keys de identidad Ziti (global para acceso multi-region)
+  project  = var.project_id
+}
+
+# KeyRing regional para CMEK del bucket GCS (requiere misma región)
+resource "google_kms_key_ring" "blueupalm_regional" {
+  name     = "blueupalm-regional"
+  location = var.region
   project  = var.project_id
 }
 
@@ -32,10 +40,10 @@ resource "google_kms_crypto_key" "ziti_identity" {
   }
 }
 
-# CryptoKey para DR (etcd snapshots + Talos PKI secrets)
+# CryptoKey para DR (etcd snapshots + Talos PKI secrets) — regional para CMEK GCS
 resource "google_kms_crypto_key" "dr_backup" {
-  name            = "dr-backup"
-  key_ring        = google_kms_key_ring.blueupalm.id
+  name            = "dr-backup-regional"
+  key_ring        = google_kms_key_ring.blueupalm_regional.id
   rotation_period = "7776000s"  # 90 días
 
   lifecycle {
@@ -44,6 +52,18 @@ resource "google_kms_crypto_key" "dr_backup" {
 }
 
 # ── GCS Bucket para DR ────────────────────────────────────────────────────────
+
+# El SA del servicio GCS necesita permiso para cifrar/descifrar con la key CMEK
+data "google_storage_project_service_account" "gcs_account" {
+  project = var.project_id
+}
+
+resource "google_kms_crypto_key_iam_member" "gcs_cmek_encrypt" {
+  crypto_key_id = google_kms_crypto_key.dr_backup.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"
+}
+
 resource "google_storage_bucket" "dr" {
   name                        = "${var.project_id}-blueupalm-dr"
   location                    = var.region
@@ -68,14 +88,16 @@ resource "google_storage_bucket" "dr" {
   lifecycle {
     prevent_destroy = true
   }
+
+  depends_on = [google_kms_crypto_key_iam_member.gcs_cmek_encrypt]
 }
 
-# Estructura de carpetas en GCS (objetos vacíos como marcadores)
+# Estructura de carpetas en GCS (objetos marcadores — GCS no admite content vacío)
 resource "google_storage_bucket_object" "dr_structure" {
   for_each = toset(["etcd/", "talos-secrets/", "spire/"])
   name     = each.key
   bucket   = google_storage_bucket.dr.name
-  content  = ""
+  content  = " "
 }
 
 # ── Service Account para el Job de backup de etcd ────────────────────────────
