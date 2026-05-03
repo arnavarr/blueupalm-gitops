@@ -86,9 +86,43 @@ fi
 # ── PASO 4: Hibernar Management Cluster ───────────────────────────────────────
 step "4" "Eliminando Management Cluster local (kind)"
 kind delete cluster --name blueupalm-mgmt 2>/dev/null && \
-    success "Management Cluster kind eliminado ✅"
+    success "Management Cluster kind eliminado ✅" || warn "kind cluster no existía"
 
 rm -f "$MGMT_KUBECONFIG" "$WORKLOAD_KUBECONFIG"
+
+# ── PASO 5: Limpiar LBs GCP directamente via gcloud (Fix INC-003) ────────────
+# Si el kubeconfig no existía, los Forwarding Rules quedan huérfanos.
+# Este paso los elimina directamente sin necesitar kubeconfig.
+step "5" "Limpieza directa de Forwarding Rules y Backend Services GCP"
+for fr in $(gcloud compute forwarding-rules list --project="$GCP_PROJECT_ID" \
+    --filter="name~bc-workload" --format="value(name,region)" 2>/dev/null | awk '{print $1"|"$2}'); do
+    NAME=$(echo "$fr" | cut -d'|' -f1)
+    REGION=$(echo "$fr" | cut -d'|' -f2)
+    info "Eliminando Forwarding Rule: $NAME (región: $REGION)"
+    gcloud compute forwarding-rules delete "$NAME" --region="$REGION" \
+        --project="$GCP_PROJECT_ID" --quiet 2>/dev/null && \
+        success "  $NAME eliminado" || warn "  $NAME ya no existía"
+done
+
+for bs in $(gcloud compute backend-services list --project="$GCP_PROJECT_ID" \
+    --filter="name~bc-workload" --format="value(name,region)" 2>/dev/null | awk '{print $1"|"$2}'); do
+    NAME=$(echo "$bs" | cut -d'|' -f1)
+    REGION=$(echo "$bs" | cut -d'|' -f2)
+    info "Eliminando Backend Service: $NAME"
+    gcloud compute backend-services delete "$NAME" --region="$REGION" \
+        --project="$GCP_PROJECT_ID" --quiet 2>/dev/null && \
+        success "  $NAME eliminado" || warn "  $NAME ya no existía"
+done
+
+# Verificar VMs residuales (CAPG puede tardar ~5 min en eliminarlas)
+VMS=$(gcloud compute instances list --project="$GCP_PROJECT_ID" \
+    --filter="name~bc-workload" --format="value(name)" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$VMS" -gt 0 ]; then
+    warn "$VMS VM(s) aún en eliminación (CAPG async). Verificar en 5 min:"
+    warn "  gcloud compute instances list --project=$GCP_PROJECT_ID"
+else
+    success "No quedan VMs GCE activas ✅"
+fi
 
 # ── RESUMEN ───────────────────────────────────────────────────────────────────
 echo -e "\n${BOLD}${GREEN}═══════════════════════════════════════════════════════════${NC}"

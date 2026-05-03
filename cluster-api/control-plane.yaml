@@ -16,6 +16,11 @@ spec:
   
   kubeadmConfigSpec:
     initConfiguration:
+      # Fix INC-002: timeout ampliado para descarga de imágenes en GCE
+      # (por defecto 4m — insuficiente si containerd 2.x debe descargar las imágenes K8s)
+      timeouts:
+        controlPlaneComponentHealthCheck: 10m0s
+        kubeletHealthCheck: 5m0s
       nodeRegistration:
         name: '{{ ds.meta_data.local_hostname }}'
         kubeletExtraArgs:
@@ -37,11 +42,10 @@ spec:
           audit-log-maxage: "30"
           audit-log-maxbackup: "3"
           audit-log-maxsize: "100"
-          # OIDC configurado para Dex
-          oidc-issuer-url: "https://dex.bc-workload.svc.cluster.local"
-          oidc-client-id: "kubernetes"
-          oidc-username-claim: "email"
-          oidc-groups-claim: "groups"
+          # Fix INC-002: OIDC eliminado del bootstrap.
+          # Se aplicará post-deploy (cuando Keycloak/Dex estén activos) con:
+          #   kubectl patch kubeadmcontrolplane bc-workload-control-plane \
+          #     --type=merge -p '{"spec":{"kubeadmConfigSpec":{"clusterConfiguration":{"apiServer":{"extraArgs":{"oidc-issuer-url":"https://dex.bc-workload.svc.cluster.local","oidc-client-id":"kubernetes","oidc-username-claim":"email","oidc-groups-claim":"groups"}}}}}}}'
         extraVolumes:
           - name: audit-log
             hostPath: /var/log

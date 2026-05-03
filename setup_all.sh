@@ -54,13 +54,29 @@ terraform apply -auto-approve -input=false \
     -var="gcp_project_id=$GCP_PROJECT_ID"
 
 INGRESS_IP=$(terraform output -raw ingress_ip_address)
-NODES_SA_EMAIL=$(terraform output -raw nodes_sa_email)
+NODES_SA_EMAIL=$(terraform output -raw nodes_service_account_email)
 export NODES_SA_EMAIL
 success "Terraform OK. IP Ingress: $INGRESS_IP | Nodes SA: $NODES_SA_EMAIL"
 cd "$SCRIPT_DIR"
 
 # ── PASO 2: Management Cluster ────────────────────────────────────────────────
 step "2" "Bootstrap Management Cluster local (kind en Mac)"
+
+# Fix INC-001: asegurar Docker Desktop corriendo en macOS antes de kind
+if [[ "$(uname)" == "Darwin" ]]; then
+    if ! docker info &>/dev/null 2>&1; then
+        warn "Docker Desktop no detectado — iniciando..."
+        open -a Docker 2>/dev/null || true
+        info "Esperando Docker daemon (hasta 60s)..."
+        for i in $(seq 1 30); do
+            docker info &>/dev/null 2>&1 && { success "Docker Desktop listo"; break; } || sleep 2
+            [ "$i" -eq 30 ] && error "Docker Desktop no arrancó tras 60s. Inícialo manualmente y repite."
+        done
+    else
+        success "Docker Desktop ya corriendo"
+    fi
+fi
+
 bash bootstrap/01-install-local-deps.sh
 export KUBECONFIG="$MGMT_KUBECONFIG"
 
@@ -93,10 +109,22 @@ success "Manifiestos CAPI aplicados (3 workers e2-standard-4, discos 200GB Ceph)
 # ── PASO 6: Esperar cluster Ready ─────────────────────────────────────────────
 step "6" "Esperando Workload Cluster Ready (hasta 30 min)"
 info "Creando VMs GCE en europe-west1-{b,c,d}..."
-kubectl wait cluster bc-workload \
-    --for=condition=Ready \
-    --timeout=1800s \
-    --namespace=default
+info "(Fix INC-002: poll cada 30s + timeout explícito — kubeadm init puede tardar 10-15 min)"
+
+# Espera activa con diagnóstico cada 2 minutos
+TIMEOUT=1800
+ELAPSED=0
+while ! kubectl get cluster bc-workload -n default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do
+    if [ $ELAPSED -ge $TIMEOUT ]; then
+        error "Cluster no listo tras ${TIMEOUT}s. Ver: kubectl describe cluster bc-workload"
+    fi
+    if (( ELAPSED % 120 == 0 && ELAPSED > 0 )); then
+        info "[${ELAPSED}s] Cluster aún provisioning... (VMs GCE: $(gcloud compute instances list --project=$GCP_PROJECT_ID --format='value(name)' 2>/dev/null | wc -l | tr -d ' ') activas)"
+        kubectl get machines -n default --no-headers 2>/dev/null | awk '{printf "  Machine %s: %s\n", $1, $6}' || true
+    fi
+    sleep 30
+    ELAPSED=$((ELAPSED + 30))
+done
 success "bc-workload: Ready ✅"
 
 # ── PASO 7: kubeconfig ────────────────────────────────────────────────────────
