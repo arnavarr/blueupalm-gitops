@@ -1,43 +1,35 @@
 # talos-extensions/ziti-tunneler/Dockerfile
-# Build multi-stage: descarga el binario oficial ziti de la release de GitHub
-# y lo empaqueta como Talos System Extension (squashfs + manifest)
+# Empaqueta el binario oficial OpenZiti como Talos System Extension
 #
-# Arquitectura moderna: OpenZiti v1.x distribuye binarios pre-compilados,
-# no hace falta compilar desde el código fuente.
-#
-# Uso local (solo para desarrollo):
-#   docker buildx build --platform linux/amd64 -t talos-ziti-ext:dev .
-#
-# En CI: el workflow genera la imagen OCI final firmada con cosign
-# Ver: .github/workflows/talos-ziti-extension.yml
+# Estrategia: descarga release pre-compilado de GitHub (más rápido que compilar)
+# Versión: v1.6.15+ (openziti/ziti)
 
-# ── Etapa 1: Descargar binario oficial de la release ─────────────────────────
 FROM --platform=linux/amd64 alpine:3.19 AS downloader
 
-RUN apk add --no-cache curl tar ca-certificates
+# Instalar dependencias de descarga
+RUN apk add --no-cache curl tar ca-certificates bash
 
-# Versión del binario Ziti a instalar (tag oficial del repo openziti/ziti)
+# Declarar ARG DENTRO del stage (obligatorio en Docker multi-stage)
 ARG ZITI_VERSION=v1.6.15
 
 WORKDIR /download
 
-# Descargar el binario pre-compilado para linux/amd64 desde GitHub Releases
-# Nota: la URL usa la versión SIN el prefijo 'v' (e.g. 1.6.15 no v1.6.15)
-RUN ZITI_VER=$(echo "${ZITI_VERSION}" | sed 's/^v//') \
-  && curl -fsSL \
-    "https://github.com/openziti/ziti/releases/download/v${ZITI_VER}/ziti-linux-amd64-${ZITI_VER}.tar.gz" \
-    -o ziti.tar.gz \
-  && tar -xzf ziti.tar.gz \
-  && chmod +x ziti \
-  && ./ziti --version
+# Descargar, extraer y verificar el binario oficial
+# La URL de release usa la versión SIN 'v': ziti-linux-amd64-1.6.15.tar.gz
+RUN set -ex \
+ && ZITI_VER="${ZITI_VERSION#v}" \
+ && URL="https://github.com/openziti/ziti/releases/download/v${ZITI_VER}/ziti-linux-amd64-${ZITI_VER}.tar.gz" \
+ && echo "Downloading: ${URL}" \
+ && curl -fsSL "${URL}" -o ziti.tar.gz \
+ && tar -xzf ziti.tar.gz \
+ && ls -la \
+ && chmod +x ziti \
+ && ./ziti --version
 
-# ── Etapa 2: Empaquetar como Talos Extension ─────────────────────────────────
+# ── Etapa final: imagen OCI vacía con solo el binario + manifest ──────────────
 FROM scratch AS extension
 
-# Binario oficial OpenZiti
 COPY --from=downloader /download/ziti /usr/local/bin/ziti-edge-tunnel
-
-# Manifest de la extensión (leído por el Talos imager)
 COPY manifest.yaml /
 
 LABEL org.opencontainers.image.title="ziti-edge-tunneler"
