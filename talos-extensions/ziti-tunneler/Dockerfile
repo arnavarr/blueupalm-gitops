@@ -6,8 +6,11 @@
 
 FROM --platform=linux/amd64 alpine:3.19 AS downloader
 
-# Instalar dependencias de descarga
+# Instalar dependencias y bash
 RUN apk add --no-cache curl tar ca-certificates bash
+
+# Cambiar el shell por defecto a bash para este stage
+SHELL ["/bin/bash", "-c"]
 
 # Declarar ARG DENTRO del stage (obligatorio en Docker multi-stage)
 ARG ZITI_VERSION=v1.6.15
