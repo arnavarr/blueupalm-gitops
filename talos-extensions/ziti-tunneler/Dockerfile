@@ -1,44 +1,44 @@
 # talos-extensions/ziti-tunneler/Dockerfile
-# Build multi-stage: compila el binario ziti-edge-tunnel para linux/amd64
+# Build multi-stage: descarga el binario oficial ziti de la release de GitHub
 # y lo empaqueta como Talos System Extension (squashfs + manifest)
+#
+# Arquitectura moderna: OpenZiti v1.x distribuye binarios pre-compilados,
+# no hace falta compilar desde el código fuente.
 #
 # Uso local (solo para desarrollo):
 #   docker buildx build --platform linux/amd64 -t talos-ziti-ext:dev .
 #
-# En CI: el imager de Talos genera la imagen OCI final firmada con cosign
+# En CI: el workflow genera la imagen OCI final firmada con cosign
 # Ver: .github/workflows/talos-ziti-extension.yml
 
-# ── Etapa 1: Compilar ziti-edge-tunnel ───────────────────────────────────────
-FROM --platform=linux/amd64 golang:1.22-alpine AS builder
+# ── Etapa 1: Descargar binario oficial de la release ─────────────────────────
+FROM --platform=linux/amd64 alpine:3.19 AS downloader
 
-RUN apk add --no-cache \
-    gcc musl-dev libpcap-dev iproute2-dev \
-    git curl ca-certificates
+RUN apk add --no-cache curl tar ca-certificates
 
-# Versión del Ziti SDK a compilar
-ARG ZITI_VERSION=v0.22.28
+# Versión del binario Ziti a instalar (tag oficial del repo openziti/ziti)
+ARG ZITI_VERSION=v1.6.15
 
-WORKDIR /src
-RUN git clone --depth 1 --branch ${ZITI_VERSION} \
-    https://github.com/openziti/ziti.git .
+WORKDIR /download
 
-# Compilar el tunneler estático para linux/amd64
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w -extldflags=-static" \
-    -o /out/ziti-edge-tunnel \
-    ./ziti-tunnel/cmd/ziti-tunnel
+# Descargar el binario pre-compilado para linux/amd64 desde GitHub Releases
+RUN curl -fsSL \
+    "https://github.com/openziti/ziti/releases/download/${ZITI_VERSION}/ziti-linux-amd64-${ZITI_VERSION#v}.tar.gz" \
+    -o ziti.tar.gz \
+  && tar -xzf ziti.tar.gz \
+  && chmod +x ziti \
+  && ./ziti --version
 
 # ── Etapa 2: Empaquetar como Talos Extension ─────────────────────────────────
 FROM scratch AS extension
 
-# Binario compilado
-COPY --from=builder /out/ziti-edge-tunnel /usr/local/bin/ziti-edge-tunnel
+# Binario oficial OpenZiti
+COPY --from=downloader /download/ziti /usr/local/bin/ziti-edge-tunnel
 
-# Manifest de la extensión
+# Manifest de la extensión (leído por el Talos imager)
 COPY manifest.yaml /
 
-# Script de arranque (systemd unit generado por Talos automáticamente)
-# El tunneler se inicia con: ziti-edge-tunnel tun --identity /etc/ziti/identity.json
 LABEL org.opencontainers.image.title="ziti-edge-tunneler"
-LABEL org.opencontainers.image.description="OpenZiti Edge Tunneler for Talos Linux"
+LABEL org.opencontainers.image.description="OpenZiti Edge Tunnel for Talos Linux"
 LABEL org.opencontainers.image.vendor="BlueUP Engineering"
+LABEL org.opencontainers.image.source="https://github.com/arnavarr/blueupalm-gitops"

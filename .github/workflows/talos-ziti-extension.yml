@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
     inputs:
       ziti_version:
-        description: 'Ziti SDK version to build'
-        default: 'v0.22.28'
+        description: 'Ziti version to download (GitHub release tag)'
+        default: 'v1.6.15'
         required: true
 
 env:
@@ -62,7 +62,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            ZITI_VERSION=${{ github.event.inputs.ziti_version || 'v0.22.28' }}
+            ZITI_VERSION=${{ github.event.inputs.ziti_version || 'v1.6.15' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
