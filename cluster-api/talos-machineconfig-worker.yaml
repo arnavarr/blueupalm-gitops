@@ -1,0 +1,37 @@
+# cluster-api/talos-machineconfig-worker.yaml
+# BlueUPALM — MachineConfig Talos para Workers (Ceph OSD)
+# El disco /dev/sdb se expone sin particiones para Rook-Ceph
+# Arquitectura: docs/architecture/talos-sovereign-stack.md
+
+apiVersion: v1alpha1
+kind: MachineConfig
+machine:
+  type: worker
+  kubelet:
+    extraArgs:
+      cloud-provider: external
+      node-labels: "role=worker,ceph-osd=true"
+  network:
+    interfaces:
+      - interface: eth0
+        dhcp: true
+  install:
+    # GCP (CAPG): /dev/sda
+    # AWS Nitro (CAPA): /dev/nvme0n1
+    disk: /dev/sda
+    image: ghcr.io/siderolabs/installer:v1.7.6
+    extensions:
+      - image: ghcr.io/siderolabs/gvisor:20240101.0
+      # [Fase 4] Ziti System Extension
+      # - image: ghcr.io/arnavarr/talos-ziti-extension:v0.1.0
+  # Disco de datos para Rook-Ceph OSD
+  # /dev/sdb = disco adicional de 200GB pd-standard (GCPMachineTemplate.additionalDisks)
+  # Sin particiones → Rook-Ceph gestiona el dispositivo en bruto (raw block device)
+  # Módulo kernel 'rbd' incluido en Talos v1.7 base — no requiere extensión adicional
+  disks:
+    - device: /dev/sdb
+      partitions: []
+  sysctls:
+    net.ipv4.ip_forward: "1"
+    net.bridge.bridge-nf-call-iptables: "1"
+    net.bridge.bridge-nf-call-ip6tables: "1"

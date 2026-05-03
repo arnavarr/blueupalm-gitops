@@ -1,0 +1,112 @@
+name: Build Talos Ziti Extension
+
+on:
+  push:
+    paths:
+      - 'talos-extensions/ziti-tunneler/**'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      ziti_version:
+        description: 'Ziti SDK version to build'
+        default: 'v0.22.28'
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/talos-ziti-extension
+  TALOS_VERSION: v1.7.6
+
+jobs:
+  build-extension:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # Requerido para cosign OIDC signing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (cross-compilation linux/amd64)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build extension image
+        uses: docker/build-push-action@v5
+        with:
+          context: talos-extensions/ziti-tunneler
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ZITI_VERSION=${{ github.event.inputs.ziti_version || 'v0.22.28' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign extension image with cosign (OIDC — keyless)
+        run: |
+          cosign sign --yes \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.meta.outputs.digest }}
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+
+      - name: Verify signature
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.meta.outputs.digest }}
+
+      - name: Build Talos installer image with extension
+        # Genera la imagen de Talos personalizada con la extensión Ziti incluida
+        # Esta imagen se puede usar directamente en el MachineConfig
+        run: |
+          docker run --rm \
+            -v /dev:/dev --privileged \
+            ghcr.io/siderolabs/imager:${TALOS_VERSION} \
+            installer \
+            --system-extension-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Summary
+        run: |
+          echo "## Talos Ziti Extension Build ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Imagen | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Digest | \`${{ steps.meta.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Firmada | ✅ cosign OIDC keyless |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Añadir al MachineConfig:**" >> $GITHUB_STEP_SUMMARY
+          echo '```yaml' >> $GITHUB_STEP_SUMMARY
+          echo "machine:" >> $GITHUB_STEP_SUMMARY
+          echo "  install:" >> $GITHUB_STEP_SUMMARY
+          echo "    extensions:" >> $GITHUB_STEP_SUMMARY
+          echo "      - image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

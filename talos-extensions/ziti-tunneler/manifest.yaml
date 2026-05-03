@@ -1,0 +1,19 @@
+# talos-extensions/ziti-tunneler/manifest.yaml
+# Talos System Extension — OpenZiti Edge Tunneler
+# Corre a nivel de OS (antes de containerd) — resuelve el bootstrap chicken-and-egg
+# Build: ver .github/workflows/talos-ziti-extension.yml
+# Docs: docs/architecture/talos-sovereign-stack.md (Sección 5 — Zero-Trust Control Plane)
+
+version: v1alpha1
+metadata:
+  name: ziti-edge-tunneler
+  version: 0.1.0
+  author: BlueUP Engineering
+  description: |
+    OpenZiti Edge Tunneler para Talos Linux.
+    Arranca antes de containerd y expone las APIs de Talos (port 50000)
+    y kube-apiserver (port 6443) exclusivamente a través del overlay NetFoundry.
+    La identidad Ziti se inyecta cifrada en el MachineConfig via GCP KMS.
+  compatibility:
+    talos:
+      version: ">= 1.7.0"

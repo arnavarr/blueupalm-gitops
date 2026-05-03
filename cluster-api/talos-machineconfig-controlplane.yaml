@@ -1,0 +1,98 @@
+# cluster-api/talos-machineconfig-controlplane.yaml
+# BlueUPALM — MachineConfig Talos para Control Plane
+# Portable entre GCP (CAPG) y AWS (CAPA): solo cambia install.disk
+# Arquitectura: docs/architecture/talos-sovereign-stack.md
+
+apiVersion: v1alpha1
+kind: MachineConfig
+machine:
+  type: controlplane
+  kubelet:
+    extraArgs:
+      cloud-provider: external          # GCP CCM (o AWS CCM con CAPA)
+      node-labels: "role=control-plane"
+  network:
+    interfaces:
+      - interface: eth0
+        dhcp: true
+  install:
+    # GCP (CAPG): /dev/sda
+    # AWS Nitro (CAPA): /dev/nvme0n1
+    # AWS legacy (CAPA): /dev/xvda
+    disk: /dev/sda
+    image: ghcr.io/siderolabs/installer:v1.7.6
+    extensions:
+      - image: ghcr.io/siderolabs/gvisor:20240101.0
+      # kata-containers requiere enableNestedVirtualization: true en GCPMachineTemplate
+      - image: ghcr.io/siderolabs/kata-containers:3.4.0
+      # [Fase 4] Ziti System Extension — activa antes de containerd (custom build)
+      # - image: ghcr.io/arnavarr/talos-ziti-extension:v0.1.0
+  sysctls:
+    net.ipv4.ip_forward: "1"
+    net.bridge.bridge-nf-call-iptables: "1"
+    net.bridge.bridge-nf-call-ip6tables: "1"
+
+cluster:
+  network:
+    podSubnets:
+      - 10.1.0.0/16
+    serviceSubnets:
+      - 10.2.0.0/20
+    cni:
+      name: none                        # Cilium lo instala Flux — no usar CNI nativo
+  etcd:
+    advertisedSubnets:
+      - 10.0.0.0/24                    # Subnet interna GCP (europe-west1)
+  apiServer:
+    # [Fase 4] Descomentar para Zero-Trust: bind solo en localhost (acceso vía Ziti dark service)
+    # listenAddress: 127.0.0.1
+    certSANs:
+      # [Fase 4] SAN para el endpoint Ziti dark service
+      # - k8s-api.bc.internal
+      - 10.0.0.100                     # VIP interna del control plane (Internal LB)
+    extraArgs:
+      audit-log-path: /var/log/kube-apiserver-audit.log
+      audit-log-maxage: "30"
+      audit-log-maxbackup: "3"
+      audit-log-maxsize: "100"
+      audit-policy-file: /etc/kubernetes/audit-policy.yaml
+      # OIDC: no en bootstrap — añadir post-deploy cuando Keycloak/Dex estén activos
+      # oidc-issuer-url: https://dex.bc-workload.svc.cluster.local
+      # oidc-client-id: kubernetes
+      # oidc-username-claim: email
+      # oidc-groups-claim: groups
+    extraVolumes:
+      - name: audit-log
+        hostPath: /var/log
+        mountPath: /var/log
+        readonly: false
+      - name: audit-policy
+        hostPath: /etc/kubernetes/audit-policy.yaml
+        mountPath: /etc/kubernetes/audit-policy.yaml
+        readonly: true
+  controllerManager:
+    extraArgs:
+      cloud-provider: external
+      bind-address: "0.0.0.0"
+  etcd:
+    extraArgs:
+      listen-metrics-urls: "http://0.0.0.0:2381"
+  # Política de auditoría inline (DORA Art. 9 + PBC/FT Ley 10/2010)
+  # No depende de cloud-init — forma parte del MachineConfig firmado
+  inlineManifests:
+    - name: audit-policy
+      contents: |
+        apiVersion: audit.k8s.io/v1
+        kind: Policy
+        rules:
+        - level: RequestResponse
+          resources:
+          - group: ""
+            resources: ["secrets"]
+        - level: Metadata
+          verbs: ["delete","create","update","patch"]
+        - level: None
+          verbs: ["get","list","watch"]
+          resources:
+          - group: ""
+            resources: ["events","nodes","pods"]

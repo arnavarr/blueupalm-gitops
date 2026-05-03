@@ -60,10 +60,12 @@ success "Terraform OK. IP Ingress: $INGRESS_IP | Nodes SA: $NODES_SA_EMAIL"
 cd "$SCRIPT_DIR"
 
 # ── PASO 2: Management Cluster ────────────────────────────────────────────────
-step "2" "Bootstrap Management Cluster local (kind en Mac)"
+step "2" "Bootstrap Management Cluster local (Talos/OrbStack o kind/Docker)"
 
-# Fix INC-001: asegurar Docker Desktop corriendo en macOS antes de kind
-if [[ "$(uname)" == "Darwin" ]]; then
+# Fix INC-001: verificar hypervisor disponible antes de crear el management cluster
+if command -v talosctl &>/dev/null; then
+    info "talosctl detectado — usando Talos como Management Cluster (sin Docker Desktop)"
+elif [[ "$(uname)" == "Darwin" ]]; then
     if ! docker info &>/dev/null 2>&1; then
         warn "Docker Desktop no detectado — iniciando..."
         open -a Docker 2>/dev/null || true
@@ -80,23 +82,43 @@ fi
 bash bootstrap/01-install-local-deps.sh
 export KUBECONFIG="$MGMT_KUBECONFIG"
 
-# ── PASO 3: CAPG ──────────────────────────────────────────────────────────────
-step "3" "Cluster API Provider GCP (CAPG)"
+# ── PASO 3: CAPG + CABPT + CACPT ──────────────────────────────────────────────
+step "3" "Cluster API Provider GCP (CAPG) + Talos Bootstrap (CABPT + CACPT)"
 bash bootstrap/02-init-capg.sh
 
-# ── PASO 4: Imagen GCE ───────────────────────────────────────────────────────
-step "4" "Imagen GCE custom (Ubuntu 22.04 + kubeadm + gVisor + Kata)"
+# ── PASO 4: Imagen Talos Linux para GCE ──────────────────────────────────────
+step "4" "Verificando imagen Talos Linux oficial para GCE"
+TALOS_VERSION="v1.7.6"
+TALOS_IMAGE_NAME="talos-${TALOS_VERSION//./-}-gce-amd64"
+
+# Buscar primero en el proyecto propio (ya registrada)
 IMAGE_EXISTS=$(gcloud compute images list \
     --project="$GCP_PROJECT_ID" \
-    --filter="family=blueupalm-k8s-node AND status=READY" \
+    --filter="name=${TALOS_IMAGE_NAME} AND status=READY" \
     --format="value(name)" 2>/dev/null | head -1)
 
-if [ -z "$IMAGE_EXISTS" ]; then
-    info "Construyendo imagen GCE (~10-15 min)..."
-    bash bootstrap/03-build-gce-image.sh
+if [ -n "$IMAGE_EXISTS" ]; then
+    success "Imagen Talos existente en proyecto: $IMAGE_EXISTS"
 else
-    success "Imagen existente: $IMAGE_EXISTS"
+    info "Registrando imagen Talos ${TALOS_VERSION} en GCE (~3 min)..."
+    GCS_BUCKET="${GCP_PROJECT_ID}-talos-images"
+    gsutil mb -p "$GCP_PROJECT_ID" -l "$GCP_REGION" "gs://${GCS_BUCKET}" 2>/dev/null || true
+
+    curl -fsSL \
+        "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/gcp-amd64.tar.gz" \
+        -o /tmp/talos-gce.tar.gz
+
+    gsutil cp /tmp/talos-gce.tar.gz "gs://${GCS_BUCKET}/talos-${TALOS_VERSION}.tar.gz"
+
+    gcloud compute images create "${TALOS_IMAGE_NAME}" \
+        --source-uri="gs://${GCS_BUCKET}/talos-${TALOS_VERSION}.tar.gz" \
+        --project="$GCP_PROJECT_ID" \
+        --family="talos-linux"
+
+    rm -f /tmp/talos-gce.tar.gz
+    success "Imagen Talos ${TALOS_VERSION} registrada ✅"
 fi
+export TALOS_IMAGE_NAME
 
 # ── PASO 5: Workload Cluster ──────────────────────────────────────────────────
 step "5" "Despliegue Workload Cluster bc-workload (CAPI/CAPG)"

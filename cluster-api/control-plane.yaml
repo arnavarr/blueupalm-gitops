@@ -1,96 +1,49 @@
 # cluster-api/control-plane.yaml
-# BlueUPALM — Control Plane: KubeadmControlPlane + GCPMachineTemplate
-apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-kind: KubeadmControlPlane
+# BlueUPALM — Control Plane: TalosControlPlane + GCPMachineTemplate
+# Reemplaza: KubeadmControlPlane + KubeadmConfigTemplate
+# Bootstrap: CACPT (Cluster API Control Plane Provider Talos) v0.5.6
+# Arquitectura: docs/architecture/talos-sovereign-stack.md
+
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlane
 metadata:
   name: bc-workload-control-plane
   namespace: default
 spec:
-  replicas: 1
-  version: v1.29.0
-  machineTemplate:
-    infrastructureRef:
-      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-      kind: GCPMachineTemplate
-      name: bc-workload-control-plane
-  
-  kubeadmConfigSpec:
-    initConfiguration:
-      # Fix INC-002: timeout ampliado para descarga de imágenes en GCE
-      # (por defecto 4m — insuficiente si containerd 2.x debe descargar las imágenes K8s)
-      timeouts:
-        controlPlaneComponentHealthCheck: 10m0s
-        kubeletHealthCheck: 5m0s
-      nodeRegistration:
-        name: '{{ ds.meta_data.local_hostname }}'
-        kubeletExtraArgs:
-          cloud-provider: external
-          node-labels: "role=control-plane"
-    
-    joinConfiguration:
-      nodeRegistration:
-        name: '{{ ds.meta_data.local_hostname }}'
-        kubeletExtraArgs:
-          cloud-provider: external
-          node-labels: "role=control-plane"
-
-    clusterConfiguration:
-      apiServer:
-        extraArgs:
-          runtime-config: "api/all=true"
-          audit-log-path: /var/log/kube-apiserver-audit.log
-          audit-log-maxage: "30"
-          audit-log-maxbackup: "3"
-          audit-log-maxsize: "100"
-          # Fix INC-002: OIDC eliminado del bootstrap.
-          # Se aplicará post-deploy (cuando Keycloak/Dex estén activos) con:
-          #   kubectl patch kubeadmcontrolplane bc-workload-control-plane \
-          #     --type=merge -p '{"spec":{"kubeadmConfigSpec":{"clusterConfiguration":{"apiServer":{"extraArgs":{"oidc-issuer-url":"https://dex.bc-workload.svc.cluster.local","oidc-client-id":"kubernetes","oidc-username-claim":"email","oidc-groups-claim":"groups"}}}}}}}'
-        extraVolumes:
-          - name: audit-log
-            hostPath: /var/log
-            mountPath: /var/log
-            readOnly: false
-            pathType: DirectoryOrCreate
-      
-      controllerManager:
-        extraArgs:
-          cloud-provider: external
-          bind-address: "0.0.0.0"
-      
-      etcd:
-        local:
-          extraArgs:
-            listen-metrics-urls: "http://0.0.0.0:2381"
-      
-      networking:
-        podSubnet: "10.1.0.0/16"
-        serviceSubnet: "10.2.0.0/20"
-        dnsDomain: "cluster.local"
-
-    # Archivos adicionales (auditoría, etc.)
-    files:
-      - path: /etc/kubernetes/audit-policy.yaml
-        owner: "root:root"
-        permissions: "0600"
-        content: |
-          # Política de auditoría para cumplimiento DORA Art. 9 y PBC/FT Ley 10/2010
-          apiVersion: audit.k8s.io/v1
-          kind: Policy
-          rules:
-          - level: RequestResponse
-            resources:
-            - group: ""
-              resources: ["secrets"]
-          - level: Metadata
-            verbs: ["delete", "deletecollection", "create", "update", "patch"]
-          - level: None
-            verbs: ["get", "list", "watch"]
-            resources:
-            - group: ""
-              resources: ["events", "nodes", "pods"]
+  version: v1.29.6
+  replicas: 1                          # HA producción bancaria: 3 réplicas
+  infrastructureTemplate:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: GCPMachineTemplate
+    name: bc-workload-control-plane
+  controlPlaneConfig:
+    controlplane:
+      generateType: controlplane       # Talos genera PKI propio — sin kubeadm
+      talosVersion: v1.7.6
+      # Parches aplicados sobre el MachineConfig base
+      configPatches:
+        # Extensiones del sistema (gVisor + Kata)
+        - op: add
+          path: /machine/install/extensions
+          value:
+            - image: ghcr.io/siderolabs/gvisor:20240101.0
+            - image: ghcr.io/siderolabs/kata-containers:3.4.0
+        # Audit log para cumplimiento DORA
+        - op: add
+          path: /cluster/apiServer/extraArgs
+          value:
+            audit-log-path: /var/log/kube-apiserver-audit.log
+            audit-log-maxage: "30"
+            audit-log-maxbackup: "3"
+            audit-log-maxsize: "100"
+        # CNI: ninguno — Cilium lo instala Flux
+        - op: replace
+          path: /cluster/network/cni/name
+          value: none
 
 ---
+# GCPMachineTemplate — Infraestructura GCP (sin cambios respecto a arquitectura anterior)
+# Solo se actualiza la imagen: Talos oficial en lugar de custom Ubuntu
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: GCPMachineTemplate
 metadata:
@@ -100,19 +53,21 @@ spec:
   template:
     spec:
       subnet: "blueupalm-subnet-${GCP_REGION}"
-      image: "projects/${GCP_PROJECT_ID}/global/images/family/blueupalm-k8s-node"
+      # Imagen Talos Linux oficial para GCE (registrada en setup_all.sh paso 4)
+      # Elimina la necesidad de bootstrap/03-build-gce-image.sh (Packer + Ubuntu custom)
+      image: "projects/${GCP_PROJECT_ID}/global/images/${TALOS_IMAGE_NAME}"
       instanceType: "e2-standard-4"
       rootDeviceSize: 100
       rootDeviceType: "pd-ssd"
-      
+      # Requerido para Kata Containers (nested virtualization)
+      enableNestedVirtualization: true
       serviceAccounts:
         email: "${NODES_SA_EMAIL}"
         scopes:
           - "https://www.googleapis.com/auth/cloud-platform"
-
       additionalLabels:
         role: control-plane
         project: blueupalm
-
+        os: talos
       additionalNetworkTags:
         - "bc-workload-node"

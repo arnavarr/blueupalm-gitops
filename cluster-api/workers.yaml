@@ -1,5 +1,8 @@
 # cluster-api/workers.yaml
-# BlueUPALM — Workers: MachineDeployment + GCPMachineTemplate
+# BlueUPALM — Workers: MachineDeployment + TalosConfigTemplate + GCPMachineTemplate
+# Reemplaza: KubeadmConfigTemplate → TalosConfigTemplate (CABPT v0.5.6)
+# Arquitectura: docs/architecture/talos-sovereign-stack.md
+
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
@@ -14,11 +17,12 @@ spec:
   template:
     spec:
       clusterName: bc-workload
-      version: v1.29.0
+      version: v1.29.6
       bootstrap:
         configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
-          kind: KubeadmConfigTemplate
+          # CABPT — Talos Bootstrap Provider (reemplaza KubeadmConfigTemplate)
+          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+          kind: TalosConfigTemplate
           name: bc-workload-workers
       infrastructureRef:
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
@@ -26,22 +30,40 @@ spec:
         name: bc-workload-workers
 
 ---
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
-kind: KubeadmConfigTemplate
+# TalosConfigTemplate — reemplaza KubeadmConfigTemplate
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: TalosConfigTemplate
 metadata:
   name: bc-workload-workers
   namespace: default
 spec:
   template:
     spec:
-      joinConfiguration:
-        nodeRegistration:
-          name: '{{ ds.meta_data.local_hostname }}'
-          kubeletExtraArgs:
+      generateType: worker
+      talosVersion: v1.7.6
+      configPatches:
+        # Labels de nodo para Rook-Ceph
+        - op: add
+          path: /machine/kubelet/extraArgs
+          value:
             cloud-provider: external
             node-labels: "role=worker,ceph-osd=true"
+        # Disco de datos raw para Rook-Ceph OSD (/dev/sdb — 200GB pd-standard)
+        # Sin particiones: Rook gestiona el dispositivo en bruto
+        # Módulo 'rbd' incluido en imagen base Talos v1.7
+        - op: add
+          path: /machine/disks
+          value:
+            - device: /dev/sdb
+              partitions: []
+        # Extensión gVisor para sandboxing de pods
+        - op: add
+          path: /machine/install/extensions
+          value:
+            - image: ghcr.io/siderolabs/gvisor:20240101.0
 
 ---
+# GCPMachineTemplate para workers — sin cambios estructurales
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: GCPMachineTemplate
 metadata:
@@ -51,24 +73,22 @@ spec:
   template:
     spec:
       subnet: "blueupalm-subnet-${GCP_REGION}"
-      image: "projects/${GCP_PROJECT_ID}/global/images/family/blueupalm-k8s-node"
+      image: "projects/${GCP_PROJECT_ID}/global/images/${TALOS_IMAGE_NAME}"
       instanceType: "e2-standard-4"
       rootDeviceSize: 100
       rootDeviceType: "pd-ssd"
-
+      # Disco adicional para Rook-Ceph OSD (raw, sin sistema de archivos)
       additionalDisks:
         - deviceType: "pd-standard"
           size: 200
-
       serviceAccounts:
         email: "${NODES_SA_EMAIL}"
         scopes:
           - "https://www.googleapis.com/auth/cloud-platform"
-
       additionalLabels:
         role: worker
         project: blueupalm
         ceph-osd: "true"
-
+        os: talos
       additionalNetworkTags:
         - "bc-workload-node"

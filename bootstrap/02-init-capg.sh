@@ -51,13 +51,13 @@ info "GCP Project: $GCP_PROJECT_ID"
 info "GCP Region:  $GCP_REGION"
 info "CAPG credentials: $CAPG_CREDENTIALS"
 
-# ── Inicializar Cluster API con proveedor GCP ─────────────────────────────────
-info "Inicializando clusterctl con proveedor GCP..."
+# ── Inicializar Cluster API con proveedor GCP + Talos Bootstrap ───────────────
+info "Inicializando clusterctl con proveedor GCP + providers Talos..."
 clusterctl init \
     --infrastructure gcp:v1.7.0 \
     --core cluster-api:v1.7.0 \
-    --bootstrap kubeadm:v1.7.0 \
-    --control-plane kubeadm:v1.7.0
+    --bootstrap talos:v0.5.6 \
+    --control-plane talos:v0.5.6
 
 # ── Esperar a que los controladores estén Ready ───────────────────────────────
 info "Esperando controladores CAPI/CAPG (hasta 5 min)..."

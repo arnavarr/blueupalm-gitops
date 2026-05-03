@@ -1,5 +1,31 @@
 #!/usr/bin/env bash
 # bootstrap/03-build-gce-image.sh
+#
+# ⚠️  DEPRECADO — No ejecutar
+#
+# Este script ha sido reemplazado por la imagen oficial de Talos Linux para GCE.
+# La imagen se registra automáticamente en setup_all.sh (Paso 4).
+#
+# Razón: La migración a Talos Linux elimina la necesidad de mantener una imagen
+# GCE custom basada en Ubuntu + kubeadm. La imagen oficial de Talos es:
+#   - Inmutable y firmada criptográficamente por Sidero Labs
+#   - Actualizable sin regenerar la imagen (talosctl upgrade)
+#   - Sin dependencia de Packer ni scripts de post-instalación
+#
+# Ver: docs/architecture/talos-sovereign-stack.md
+#
+# Si necesitas la imagen Talos manualmente:
+#   TALOS_VERSION=v1.7.6
+#   curl -fsSL "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/gcp-amd64.tar.gz" \
+#     -o /tmp/talos-gce.tar.gz
+#   gsutil cp /tmp/talos-gce.tar.gz gs://YOUR_BUCKET/talos-${TALOS_VERSION}.tar.gz
+#   gcloud compute images create "talos-${TALOS_VERSION//./-}-gce-amd64" \
+#     --source-uri="gs://YOUR_BUCKET/talos-${TALOS_VERSION}.tar.gz" \
+#     --project=YOUR_PROJECT --family=talos-linux
+
+echo "⚠️  Este script está DEPRECADO. La imagen Talos oficial se registra automáticamente"
+echo "    en setup_all.sh (Paso 4). Ver: docs/architecture/talos-sovereign-stack.md"
+exit 0
 # BlueUPALM — Construcción de imagen GCE custom para nodos Kubernetes
 #
 # Crea una imagen GCE basada en Ubuntu 22.04 con:

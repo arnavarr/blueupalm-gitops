@@ -41,21 +41,39 @@ echo -e "${BOLD}${BLUE}═══════════════════
 
 KUBECTL_WC="kubectl --kubeconfig=$WORKLOAD_KUBECONFIG"
 
-# ── PASO 1: Eliminar LoadBalancer Services ────────────────────────────────────
-step "1" "Eliminando Services LoadBalancer (ahorro de Forwarding Rules)"
+# ── PASO 1: Eliminar Forwarding Rules y LBs GCP ──────────────────────────────
+# Fix INC-003: limpieza directa vía gcloud, sin depender del kubeconfig del Workload
+step "1" "Eliminando Forwarding Rules y LBs GCP (ahorro directo, sin kubeconfig)"
+
+info "Buscando Forwarding Rules asociadas al cluster bc-workload..."
+FWD_RULES=$(gcloud compute forwarding-rules list \
+    --project="$GCP_PROJECT_ID" \
+    --format="value(name,region)" 2>/dev/null | grep -i "bc-workload" || true)
+
+if [ -n "$FWD_RULES" ]; then
+    while IFS=$'\t' read -r NAME REGION; do
+        [ -z "$NAME" ] && continue
+        info "Eliminando forwarding-rule: $NAME (region: $REGION)"
+        gcloud compute forwarding-rules delete "$NAME" \
+            --region="$REGION" \
+            --project="$GCP_PROJECT_ID" \
+            --quiet 2>/dev/null || true
+    done <<< "$FWD_RULES"
+    success "Forwarding Rules eliminadas ✅"
+else
+    success "No hay Forwarding Rules activas de bc-workload ✅"
+fi
+
+# Complementario: si el kubeconfig está disponible, borrar también vía K8s
 if [ -f "$WORKLOAD_KUBECONFIG" ]; then
-    info "Borrando Services tipo LoadBalancer..."
+    info "kubeconfig disponible — eliminando Services LoadBalancer vía K8s..."
     $KUBECTL_WC get svc -A --no-headers 2>/dev/null | awk '{print $1, $2}' | \
-    while read ns name; do
+    while read -r ns name; do
         TYPE=$($KUBECTL_WC get svc -n "$ns" "$name" -o jsonpath='{.spec.type}' 2>/dev/null || echo "")
-        if [ "$TYPE" = "LoadBalancer" ]; then
-            info "Borrando LoadBalancer: $ns/$name"
-            $KUBECTL_WC delete svc -n "$ns" "$name" --wait=false
-        fi
+        [ "$TYPE" = "LoadBalancer" ] && \
+            $KUBECTL_WC delete svc -n "$ns" "$name" --wait=false 2>/dev/null || true
     done
     sleep 10
-else
-    warn "kubeconfig de Workload no encontrado — saltando paso 1"
 fi
 
 # ── PASO 2: Eliminar PVCs y Discos ────────────────────────────────────────────
@@ -84,9 +102,19 @@ else
 fi
 
 # ── PASO 4: Hibernar Management Cluster ───────────────────────────────────────
-step "4" "Eliminando Management Cluster local (kind)"
-kind delete cluster --name blueupalm-mgmt 2>/dev/null && \
-    success "Management Cluster kind eliminado ✅" || warn "kind cluster no existía"
+step "4" "Eliminando Management Cluster local (Talos/OrbStack o kind)"
+
+# Intentar con talosctl primero (Fase 1+)
+if command -v talosctl &>/dev/null && talosctl config info --context blueupalm-mgmt &>/dev/null 2>&1; then
+    talosctl cluster destroy --name blueupalm-mgmt 2>/dev/null && \
+        success "Management Cluster Talos eliminado ✅" || warn "talosctl destroy falló — puede que ya no existiera"
+# Fallback: kind (mientras se migra a Talos)
+elif command -v kind &>/dev/null; then
+    kind delete cluster --name blueupalm-mgmt 2>/dev/null && \
+        success "Management Cluster kind eliminado ✅" || warn "kind cluster no existía"
+else
+    warn "No se encontró talosctl ni kind — Management Cluster puede seguir activo"
+fi
 
 rm -f "$MGMT_KUBECONFIG" "$WORKLOAD_KUBECONFIG"
 
