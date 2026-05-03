@@ -54,6 +54,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build extension image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: talos-extensions/ziti-tunneler
@@ -72,7 +73,7 @@ jobs:
       - name: Sign extension image with cosign (OIDC — keyless)
         run: |
           cosign sign --yes \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.meta.outputs.digest }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
         env:
           COSIGN_EXPERIMENTAL: "true"
 
@@ -81,7 +82,7 @@ jobs:
           cosign verify \
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.meta.outputs.digest }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
 
       - name: Build Talos installer image with extension
         # Genera la imagen de Talos personalizada con la extensión Ziti incluida
