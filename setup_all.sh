@@ -104,8 +104,9 @@ else
     GCS_BUCKET="${GCP_PROJECT_ID}-talos-images"
     gsutil mb -p "$GCP_PROJECT_ID" -l "$GCP_REGION" "gs://${GCS_BUCKET}" 2>/dev/null || true
 
+    # Descarga oficial de GitHub Releases (formato raw.tar.gz para GCE)
     curl -fsSL \
-        "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/gcp-amd64.tar.gz" \
+        "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/gcp-amd64.raw.tar.gz" \
         -o /tmp/talos-gce.tar.gz
 
     gsutil cp /tmp/talos-gce.tar.gz "gs://${GCS_BUCKET}/talos-${TALOS_VERSION}.tar.gz"

@@ -90,5 +90,4 @@ spec:
         project: blueupalm
         ceph-osd: "true"
         os: talos
-      additionalNetworkTags:
-        - "bc-workload-node"
+

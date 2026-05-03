@@ -37,9 +37,11 @@ spec:
             audit-log-maxbackup: "3"
             audit-log-maxsize: "100"
         # CNI: ninguno — Cilium lo instala Flux
-        - op: replace
-          path: /cluster/network/cni/name
-          value: none
+        # Usar add sobre /cluster/network para asegurar que cni.name=none aunque no exista el path
+        - op: add
+          path: /cluster/network/cni
+          value:
+            name: none
 
 ---
 # GCPMachineTemplate — Infraestructura GCP (sin cambios respecto a arquitectura anterior)
@@ -59,8 +61,6 @@ spec:
       instanceType: "e2-standard-4"
       rootDeviceSize: 100
       rootDeviceType: "pd-ssd"
-      # Requerido para Kata Containers (nested virtualization)
-      enableNestedVirtualization: true
       serviceAccounts:
         email: "${NODES_SA_EMAIL}"
         scopes:
@@ -69,5 +69,4 @@ spec:
         role: control-plane
         project: blueupalm
         os: talos
-      additionalNetworkTags:
-        - "bc-workload-node"
+
