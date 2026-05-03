@@ -22,8 +22,10 @@ ARG ZITI_VERSION=v1.6.15
 WORKDIR /download
 
 # Descargar el binario pre-compilado para linux/amd64 desde GitHub Releases
-RUN curl -fsSL \
-    "https://github.com/openziti/ziti/releases/download/${ZITI_VERSION}/ziti-linux-amd64-${ZITI_VERSION#v}.tar.gz" \
+# Nota: la URL usa la versión SIN el prefijo 'v' (e.g. 1.6.15 no v1.6.15)
+RUN ZITI_VER=$(echo "${ZITI_VERSION}" | sed 's/^v//') \
+  && curl -fsSL \
+    "https://github.com/openziti/ziti/releases/download/v${ZITI_VER}/ziti-linux-amd64-${ZITI_VER}.tar.gz" \
     -o ziti.tar.gz \
   && tar -xzf ziti.tar.gz \
   && chmod +x ziti \
