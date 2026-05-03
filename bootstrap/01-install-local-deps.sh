@@ -98,35 +98,29 @@ else
 
     # QEMU via OrbStack (Apple Silicon — sin Docker Desktop)
     if command -v orb &>/dev/null; then
-        PROVISIONER="qemu"
         info "Usando OrbStack/QEMU como provisioner (Apple Hypervisor Framework)"
+        sudo -E talosctl cluster create qemu \
+            --name blueupalm-mgmt \
+            --controlplanes 1 \
+            --workers 0 \
+            --kubernetes-version v1.29.6 \
+            --talos-version v1.7.6
     else
-        # Fallback: Docker como provisioner (requiere Docker Desktop)
-        PROVISIONER="docker"
+        # Docker provisioner (sin root — usa Docker socket de OrbStack/Docker Desktop)
         warn "OrbStack no encontrado — usando Docker como provisioner (fallback)"
-        warn "Instalar OrbStack para eliminar dependencia de Docker Desktop: brew install orbstack"
+        talosctl cluster create docker \
+            --name blueupalm-mgmt \
+            --workers 0 \
+            --kubernetes-version 1.32.0
     fi
-
-    talosctl cluster create \
-        --name blueupalm-mgmt \
-        --provisioner "${PROVISIONER}" \
-        --controlplanes 1 \
-        --workers 0 \
-        --kubernetes-version v1.29.6 \
-        --talos-version v1.7.6
 
     success "Cluster Talos 'blueupalm-mgmt' creado"
 fi
 
-# Exportar kubeconfig
-MGMT_NODE=$(talosctl config info --context blueupalm-mgmt 2>/dev/null | grep "Endpoints:" | awk '{print $2}' | head -1)
-talosctl kubeconfig "$MGMT_KUBECONFIG" \
-    --nodes "${MGMT_NODE:-10.5.0.2}" \
-    --cluster blueupalm-mgmt \
-    --force 2>/dev/null || \
-talosctl kubeconfig "$MGMT_KUBECONFIG" \
-    --cluster blueupalm-mgmt \
-    --force
+# Exportar kubeconfig usando kubectl (talosctl ya lo mergeó en ~/.kube/config)
+KUBECONFIG="$HOME/.kube/config" kubectl config use-context admin@blueupalm-mgmt 2>/dev/null || true
+KUBECONFIG="$HOME/.kube/config" kubectl --context admin@blueupalm-mgmt config view --raw --minify \
+    > "$MGMT_KUBECONFIG"
 chmod 600 "$MGMT_KUBECONFIG"
 success "kubeconfig guardado en $MGMT_KUBECONFIG"
 

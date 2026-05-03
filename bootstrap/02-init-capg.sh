@@ -53,11 +53,23 @@ info "CAPG credentials: $CAPG_CREDENTIALS"
 
 # ── Inicializar Cluster API con proveedor GCP + Talos Bootstrap ───────────────
 info "Inicializando clusterctl con proveedor GCP + providers Talos..."
-clusterctl init \
-    --infrastructure gcp:v1.7.0 \
-    --core cluster-api:v1.7.0 \
-    --bootstrap talos:v0.5.6 \
-    --control-plane talos:v0.5.6
+
+# Idempotente: verificar si ya está instalado
+if kubectl get namespace capi-system &>/dev/null && \
+   kubectl get deployment -n capi-system capi-controller-manager &>/dev/null; then
+    info "CAPI ya instalado — verificando upgrade si es necesario..."
+    # Actualizar credenciales CAPG por si han cambiado
+    kubectl create secret generic capg-manager-bootstrap-credentials \
+        -n capg-system \
+        --from-file=credentials.json="$CAPG_CREDENTIALS" \
+        --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || true
+else
+    clusterctl init \
+        --infrastructure gcp \
+        --core cluster-api \
+        --bootstrap talos \
+        --control-plane talos
+fi
 
 # ── Esperar a que los controladores estén Ready ───────────────────────────────
 info "Esperando controladores CAPI/CAPG (hasta 5 min)..."
