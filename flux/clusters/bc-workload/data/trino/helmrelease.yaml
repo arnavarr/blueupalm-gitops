@@ -178,7 +178,7 @@ spec:
       labels:
         app: iceberg-rest-catalog
     spec:
-      runtimeClassName: gvisor
+      # runtimeClassName: gvisor  # Deshabilitado: requiere Talos gVisor extension
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

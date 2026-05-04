@@ -30,7 +30,7 @@ spec:
         app: ingestion-agent
         spiffe-svid: "true"
     spec:
-      runtimeClassName: gvisor
+      # runtimeClassName: gvisor  # Deshabilitado: requiere Talos gVisor extension
 
       serviceAccountName: ingestion-agent
 

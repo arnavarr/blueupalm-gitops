@@ -27,8 +27,10 @@ spec:
       labels:
         app: opa
     spec:
-      # gVisor: aislamiento de kernel para el motor de políticas
-      runtimeClassName: gvisor
+      # gVisor: aislamiento de kernel para el motor de políticas.
+      # NOTA: Talos v1.7.6 requiere la System Extension 'siderolabs/gvisor' para runsc.
+      # Deshabilitado temporalmente hasta que la extensión esté instalada en los nodos.
+      # runtimeClassName: gvisor
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

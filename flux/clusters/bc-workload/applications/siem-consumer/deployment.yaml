@@ -23,7 +23,7 @@ spec:
       labels:
         app: siem-consumer
     spec:
-      runtimeClassName: gvisor
+      # runtimeClassName: gvisor  # Deshabilitado: requiere Talos gVisor extension
       serviceAccountName: siem-consumer
       securityContext:
         runAsNonRoot: true
