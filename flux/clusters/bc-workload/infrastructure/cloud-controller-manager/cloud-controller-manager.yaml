@@ -1,0 +1,187 @@
+# flux/clusters/bc-workload/infrastructure/cloud-controller-manager/cloud-controller-manager.yaml
+# BlueUPALM — GCP Cloud Controller Manager (CCM)
+#
+# Soluciona el CreateContainerError en el bootstrap inicial del CCM.
+#
+# DIAGNÓSTICO DEL ERROR:
+# El CCM de GCP requiere un Secret llamado `cloud-config` en kube-system que
+# contenga el fichero `cloud.conf` con el project ID del proyecto GCP.
+# Sin este Secret, el pod arranca con CreateContainerError porque el volumeMount
+# falla al no encontrar el Secret referenciado.
+#
+# ARQUITECTURA AUTH:
+# - SA K8s: kube-system/cloud-controller-manager
+# - SA GCP: bc-workload-nodes@homelab-466309.iam.gserviceaccount.com
+# - El nodo GCE ya corre con esta SA → el CCM usa las credenciales del metadata server
+#   (sin necesidad de JSON key ni Workload Identity explícita en clusters CAPG/Talos)
+#
+# PERMISOS REQUERIDOS EN GCP (ya aplicados por Terraform para la SA de nodos):
+#   - roles/compute.loadBalancerAdmin  → gestión de LBs (NOT PRESENT — ver nota)
+#   - roles/compute.viewer             → lectura de recursos GCE
+#
+# NOTA: La SA bc-workload-nodes actualmente SOLO tiene:
+#   logging.logWriter, monitoring.metricWriter, storage.objectViewer, artifactregistry.reader
+# Falta roles/compute.viewer para que el CCM pueda listar instancias/nodos.
+# Ver script de fix: scripts/fix-ccm-iam.sh
+
+---
+# ── Secret: cloud-config (CAUSA RAÍZ del CreateContainerError) ───────────────
+# Este Secret es montado por el DaemonSet del CCM como volumen.
+# Sin él, el pod no puede arrancar (CreateContainerError).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloud-config
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/component: cloud-controller-manager
+    app.kubernetes.io/managed-by: flux
+type: Opaque
+stringData:
+  cloud.conf: |
+    [global]
+    project-id = homelab-466309
+    network-name = blueupalm-vpc
+    subnetwork-name = blueupalm-subnet-europe-west1
+    node-tags = bc-workload-node
+    multizone = false
+    regional = false
+
+---
+# ── RBAC: ClusterRole para el CCM ────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloud-controller-manager
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/component: cloud-controller-manager
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:cloud-controller-manager
+  labels:
+    app.kubernetes.io/component: cloud-controller-manager
+rules:
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch, update]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch, delete, patch, update]
+  - apiGroups: [""]
+    resources: [nodes/status]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [services/status]
+    verbs: [list, patch, update, watch, get]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create, get]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, update, watch]
+  - apiGroups: [""]
+    resources: [endpoints]
+    verbs: [create, get, list, watch, update]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: [leases]
+    verbs: [create, get, list, watch, update]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system:cloud-controller-manager
+  labels:
+    app.kubernetes.io/component: cloud-controller-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:cloud-controller-manager
+subjects:
+  - kind: ServiceAccount
+    name: cloud-controller-manager
+    namespace: kube-system
+
+---
+# ── DaemonSet: GCP CCM (corre en los nodos control-plane) ────────────────────
+# Versión: registry.k8s.io/cloud-provider-gcp/cloud-controller-manager:v29.0.0
+# Compatible con K8s v1.29.x (mismo major.minor)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cloud-controller-manager
+  namespace: kube-system
+  labels:
+    app: cloud-controller-manager
+    app.kubernetes.io/component: cloud-controller-manager
+    app.kubernetes.io/managed-by: flux
+spec:
+  selector:
+    matchLabels:
+      app: cloud-controller-manager
+  template:
+    metadata:
+      labels:
+        app: cloud-controller-manager
+        app.kubernetes.io/component: cloud-controller-manager
+    spec:
+      # Solo en nodos control-plane (Talos los marca con control-plane taint)
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node.cloudprovider.kubernetes.io/uninitialized
+          operator: Exists
+          effect: NoSchedule
+
+      serviceAccountName: cloud-controller-manager
+      hostNetwork: true    # Necesario para acceder a GCP metadata server
+
+      priorityClassName: system-cluster-critical
+
+      containers:
+        - name: cloud-controller-manager
+          image: registry.k8s.io/cloud-provider-gcp/cloud-controller-manager:v29.0.0
+          command:
+            - /bin/gcp-cloud-controller-manager
+            - --cloud-provider=gce
+            - --cloud-config=/etc/cloud/cloud.conf
+            - --controllers=cloud-node,cloud-node-lifecycle,service,route
+            - --leader-elect=true
+            - --use-service-account-credentials=true
+            - --allocate-node-cidrs=false   # Cilium gestiona los CIDRs
+            - --configure-cloud-routes=false # Cilium gestiona el routing
+            - --v=2
+
+          volumeMounts:
+            - name: cloud-config
+              mountPath: /etc/cloud
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 50Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
+
+      volumes:
+        - name: cloud-config
+          secret:
+            secretName: cloud-config     # ← ESTE ES EL SECRET QUE FALTABA

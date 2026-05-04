@@ -1,0 +1,35 @@
+# flux/clusters/bc-workload/infrastructure/cloud-controller-manager/kustomization.yaml
+# BlueUPALM — GCP Cloud Controller Manager
+#
+# El CCM gestiona la integración con las APIs de GCP: Load Balancers (Services type=LoadBalancer),
+# Node lifecycle (inicialización, taints node.cloudprovider.kubernetes.io/uninitialized),
+# y Route controller. Sin CCM los workers quedan permanentemente con el taint de
+# uninitialized y ningún pod se puede schedulear en ellos.
+#
+# Auth: La SA de K8s `cloud-controller-manager` en kube-system se autentica contra
+# GCP usando Workload Identity vinculada a la SA GCP `bc-workload-nodes`.
+# El CCM también necesita el fichero cloud-config con el project ID (montado desde Secret).
+#
+# DEPENDENCIAS: Cilium CNI (los nodos deben tener red antes de que el CCM inicialice)
+
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cloud-controller-manager
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./flux/clusters/bc-workload/infrastructure/cloud-controller-manager
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: cilium
+    - name: namespaces
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-vars

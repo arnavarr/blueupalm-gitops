@@ -46,6 +46,28 @@ spec:
   timeout: 20m    # Cilium + cert-manager pueden tardar en iniciar
 
 ---
+# ── 2.5. Cloud Controller Manager (GCP CCM) ───────────────────────────────────
+# DEBE ir antes de security/networking para que los workers sean inicializados
+# (se elimina el taint node.cloudprovider.kubernetes.io/uninitialized)
+# antes de que Keycloak y SPIRE intenten schedulear sus pods.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cloud-controller-manager
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: infrastructure    # Cilium debe estar activo primero
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./clusters/bc-workload/infrastructure/cloud-controller-manager
+  prune: true
+  wait: true
+  timeout: 5m
+
+---
 # ── 3. Security (Keycloak, SPIRE, OPA, OpenZiti, Dex) ─────────────────────────
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -56,6 +78,7 @@ spec:
   interval: 10m
   dependsOn:
     - name: infrastructure
+    - name: cloud-controller-manager   # Workers deben estar inicializados antes de schedulear pods
   sourceRef:
     kind: GitRepository
     name: flux-system

@@ -21,9 +21,9 @@ metadata:
     app.kubernetes.io/managed-by: flux
   annotations:
     # ── Flux Image Automation ─────────────────────────────────────────────
-    # Detecta nuevas imágenes en GHCR y actualiza este campo automáticamente
-    image.toolkit.fluxcd.io/name: "ghcr.io/blueup/frontend"
-    image.toolkit.fluxcd.io/policy: "semver:>=0.1.0"
+    # La ImagePolicy canónica está en image-automation.yaml (patrón sha-*)
+    # No usar anotaciones image.toolkit.fluxcd.io/* aquí — el setter
+    # en la línea de `image:` es suficiente para que ImageUpdateAutomation actúe.
 spec:
   replicas: 2    # HA para disponibilidad frontend
   selector:
@@ -128,29 +128,9 @@ spec:
       name: http
   type: ClusterIP
 
----
-# ── Flux ImagePolicy: detectar nuevas versiones del frontend ─────────────────
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImageRepository
-metadata:
-  name: frontend
-  namespace: flux-system
-spec:
-  image: ghcr.io/arnavarr/bc-frontend
-  interval: 5m    # Poll cada 5 minutos para nuevas versiones
-
----
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImagePolicy
-metadata:
-  name: frontend
-  namespace: flux-system
-spec:
-  imageRepositoryRef:
-    name: frontend
-  policy:
-    semver:
-      range: ">=0.1.0"
+# ── NOTA: ImageRepository e ImagePolicy del frontend ─────────────────────────
+# Están definidos en image-automation.yaml con el patrón correcto sha-*.
+# No duplicar aquí para evitar conflictos de ownership entre recursos Flux.
 
 ---
 # ── NetworkPolicy: frontend solo acepta tráfico de Traefik ───────────────────
