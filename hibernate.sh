@@ -152,6 +152,23 @@ else
     success "No quedan VMs GCE activas ✅"
 fi
 
+# ── PASO 6: Borrar la dirección IP ziti-ip ────────────────────────────────────
+step "6" "Limpieza de dirección IP estática ziti-ip"
+info "Buscando y eliminando IP estática ziti-ip en todas las regiones..."
+
+ZITI_IP_INFO=$(gcloud compute addresses list --project="$GCP_PROJECT_ID" --filter="name=ziti-ip" --format="value(name,region)" 2>/dev/null || true)
+
+if [ -n "$ZITI_IP_INFO" ]; then
+    while IFS=$'\t' read -r NAME REGION; do
+        [ -z "$NAME" ] && continue
+        info "Eliminando IP estática: $NAME (región: $REGION)"
+        gcloud compute addresses delete "$NAME" --region="$REGION" --project="$GCP_PROJECT_ID" --quiet 2>/dev/null && \
+            success "IP $NAME eliminada ✅" || warn "No se pudo eliminar la IP $NAME"
+    done <<< "$ZITI_IP_INFO"
+else
+    success "IP ziti-ip no encontrada o ya no existía ✅"
+fi
+
 # ── RESUMEN ───────────────────────────────────────────────────────────────────
 echo -e "\n${BOLD}${GREEN}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${BOLD}${GREEN}  ✅ HIBERNACIÓN COMPLETADA${NC}"
@@ -164,6 +181,7 @@ echo ""
 echo -e "  ${BOLD}ELIMINADO:${NC}"
 echo -e "  - VMs GCE y Discos de datos (Coste mensual -> $0)"
 echo -e "  - Forwarding Rules de GCP"
+echo -e "  - Dirección IP estática ziti-ip"
 echo ""
 echo -e "  ${BOLD}PRÓXIMA SESIÓN:${NC}"
 echo -e "  1. bash setup_all.sh   (Se saltará Terraform e Imagen GCE si existen)"
