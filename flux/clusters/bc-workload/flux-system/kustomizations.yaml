@@ -81,6 +81,7 @@ spec:
   dependsOn:
     - name: infrastructure
     - name: cloud-controller-manager   # Workers deben estar inicializados antes de schedulear pods
+    - name: data                        # Keycloak necesita PostgreSQL (data layer) operativo
   sourceRef:
     kind: GitRepository
     name: flux-system
@@ -141,11 +142,11 @@ metadata:
 spec:
   interval: 10m
   dependsOn:
-    # NOTA: La dependencia de security (SPIRE) se elimina temporalmente para el bootstrap.
-    # Circular dependency: security (Keycloak) necesita PostgreSQL de data,
-    # data necesita messaging, messaging necesitaba security.
-    # SPIRE/NATS mTLS se configurará en fase posterior (post-bootstrap).
     - name: infrastructure
+    # NATS usa NKeys (no SPIRE SVIDs) — no depende de security para arrancar.
+    # La dependencia de security se restaura aquí solo para garantizar que
+    # External Secrets haya propagado los seeds NKey antes de que NATS los lea.
+    - name: security
   sourceRef:
     kind: GitRepository
     name: flux-system
@@ -164,9 +165,10 @@ metadata:
 spec:
   interval: 10m
   dependsOn:
-    # NOTA: La dependencia de messaging eliminada temporalmente para romper el ciclo:
-    # security (Keycloak) → PostgreSQL (data) → messaging → security
-    # PostgreSQL es una dependencia de Keycloak, no de NATS. Se separan en bootstrap.
+    # PostgreSQL y Qdrant no necesitan NATS para iniciar — solo necesitan CSI (Rook-Ceph PVCs).
+    # Qdrant se conectará a NATS una vez que messaging esté ready (conexión lazy).
+    # No se añade messaging como dependencia para evitar el ciclo:
+    #   security → data → messaging → security
     - name: infrastructure
   sourceRef:
     kind: GitRepository
