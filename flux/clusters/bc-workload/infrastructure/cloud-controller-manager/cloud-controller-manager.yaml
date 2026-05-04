@@ -158,14 +158,16 @@ spec:
         - name: cloud-controller-manager
           image: registry.k8s.io/cloud-provider-gcp/cloud-controller-manager:v29.0.0
           command:
-            - /bin/gcp-cloud-controller-manager
+            - /go-runner
+          args:
+            - /cloud-controller-manager
             - --cloud-provider=gce
             - --cloud-config=/etc/cloud/cloud.conf
             - --controllers=cloud-node,cloud-node-lifecycle,service,route
             - --leader-elect=true
             - --use-service-account-credentials=true
-            - --allocate-node-cidrs=false   # Cilium gestiona los CIDRs
-            - --configure-cloud-routes=false # Cilium gestiona el routing
+            - --allocate-node-cidrs=false
+            - --configure-cloud-routes=false
             - --v=2
 
           volumeMounts:
