@@ -1,5 +1,8 @@
-# flux/clusters/bc-workload/applications/runtimeclasses.yaml
+# flux/clusters/bc-workload/infrastructure/runtimeclasses.yaml
 # BlueUPALM — RuntimeClasses para Sandboxing de Workloads
+#
+# NOTA: En K8s >= 1.24 (node.k8s.io/v1 stable), RuntimeClass usa 'handler' como
+# campo de primer nivel (no bajo 'spec'). La estructura spec.handler era v1beta1.
 #
 # gVisor (runsc): runtime PRINCIPAL para todos los workloads BC con datos bancarios.
 #   - Intercepta syscalls a nivel de proceso (userspace kernel)
@@ -20,19 +23,18 @@ metadata:
     app.kubernetes.io/managed-by: flux
     sandbox: "true"
     runtime-type: "userspace-kernel"
-spec:
-  handler: runsc    # Handler configurado en containerd/config.toml de la imagen GCE
+handler: runsc
 
-  # Overhead de recursos del runtime (gVisor consume ~10MB RAM adicional por pod)
-  overhead:
-    podFixed:
-      memory: "10Mi"
-      cpu: "10m"
+# Overhead de recursos del runtime (gVisor consume ~10MB RAM adicional por pod)
+overhead:
+  podFixed:
+    memory: "10Mi"
+    cpu: "10m"
 
-  # Distribución de pods gVisor — preferentemente en workers (no CP)
-  scheduling:
-    nodeSelector:
-      role: worker
+# Distribución de pods gVisor — preferentemente en workers (no CP)
+scheduling:
+  nodeSelector:
+    role: worker
 
 ---
 # ── RuntimeClass: Kata Containers (opcional, activación futura) ───────────────
@@ -45,16 +47,15 @@ metadata:
     sandbox: "true"
     runtime-type: "micro-vm"
     status: "optional-future-activation"
-spec:
-  handler: kata    # Handler configurado en containerd/config.toml de la imagen GCE
+handler: kata
 
-  overhead:
-    podFixed:
-      memory: "160Mi"    # Kata necesita VM overhead por pod
-      cpu: "250m"
+overhead:
+  podFixed:
+    memory: "160Mi"
+    cpu: "250m"
 
-  scheduling:
-    nodeSelector:
-      role: worker
-      # Descomentar si los workers tienen nested-virt confirmada:
-      # nested-virtualization: "true"
+scheduling:
+  nodeSelector:
+    role: worker
+    # Descomentar si los workers tienen nested-virt confirmada:
+    # nested-virtualization: "true"
