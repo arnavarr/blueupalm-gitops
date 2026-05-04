@@ -66,6 +66,23 @@ resource "google_project_iam_member" "nodes_artifact_registry" {
   member  = "serviceAccount:${google_service_account.nodes.email}"
 }
 
+# ── Roles adicionales para GCP Cloud Controller Manager (CCM) ─────────────────
+# El CCM corre en los nodos CP y necesita permisos para:
+#   - compute.viewer:           listar instancias GCE y zonas (node lifecycle)
+#   - compute.loadBalancerAdmin: crear/actualizar LBs para Services type=LoadBalancer
+# Añadidos el 2026-05-04 tras diagnóstico CreateContainerError del CCM DaemonSet.
+resource "google_project_iam_member" "nodes_compute_viewer" {
+  project = var.project_id
+  role    = "roles/compute.viewer"
+  member  = "serviceAccount:${google_service_account.nodes.email}"
+}
+
+resource "google_project_iam_member" "nodes_lb_admin" {
+  project = var.project_id
+  role    = "roles/compute.loadBalancerAdmin"
+  member  = "serviceAccount:${google_service_account.nodes.email}"
+}
+
 # ── Service Account: External Secrets Operator ────────────────────────────────
 # Acceso de solo lectura a GCP Secret Manager desde pods via Workload Identity
 resource "google_service_account" "external_secrets" {
