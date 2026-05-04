@@ -1,0 +1,15 @@
+# flux/clusters/bc-workload/kustomization.yaml
+# Kustomize entry point for the bc-workload cluster.
+# This file tells Kustomize which resources to include when building this directory.
+# Only the flux-system subdirectory is included here — it contains the Flux components
+# (gotk-components, gotk-sync) and the Kustomization CRDs (kustomizations.yaml).
+#
+# All application layers (infrastructure, security, applications, etc.) are managed
+# via Flux Kustomization CRDs defined in flux-system/kustomizations.yaml,
+# NOT by direct Kustomize inclusion from this file.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - flux-system
