@@ -24,7 +24,7 @@ spec:
         app: ai-triage-agent
         spiffe-svid: "true"
     spec:
-      # runtimeClassName: gvisor  # Deshabilitado: requiere Talos gVisor extension
+      runtimeClassName: gvisor
       serviceAccountName: ai-triage-agent
       securityContext:
         runAsNonRoot: true

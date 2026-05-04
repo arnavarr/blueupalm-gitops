@@ -25,7 +25,7 @@ spec:
         app: bc-api
         spiffe-svid: "true"
     spec:
-      # runtimeClassName: gvisor  # Deshabilitado: requiere Talos gVisor extension
+      runtimeClassName: gvisor
       serviceAccountName: bc-api
       securityContext:
         runAsNonRoot: true

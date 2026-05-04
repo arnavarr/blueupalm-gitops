@@ -21,7 +21,7 @@ machine:
     disk: /dev/sda
     image: ghcr.io/siderolabs/installer:v1.7.6
     extensions:
-      - image: ghcr.io/siderolabs/gvisor:20240101.0
+      - image: ghcr.io/siderolabs/gvisor:20240325.0
       # [Fase 4] Ziti System Extension
       # - image: ghcr.io/arnavarr/talos-ziti-extension:v0.1.0
   # Disco de datos para Rook-Ceph OSD

@@ -32,7 +32,7 @@ spec:
         spiffe-svid: "true"    # Etiqueta para SPIRE registration entry
     spec:
       # ── gVisor: sandboxing de kernel para datos bancarios (PBC/FT, RGPD Art.35)
-      # runtimeClassName: gvisor  # Deshabilitado: requiere Talos gVisor extension
+      runtimeClassName: gvisor
 
       serviceAccountName: edge-security
 
