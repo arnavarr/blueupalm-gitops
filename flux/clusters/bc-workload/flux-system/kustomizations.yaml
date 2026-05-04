@@ -21,7 +21,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./clusters/bc-workload/infrastructure/namespaces
+  path: ./flux/clusters/bc-workload/infrastructure
   prune: true
   wait: true
   timeout: 2m

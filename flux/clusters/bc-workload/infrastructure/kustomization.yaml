@@ -1,0 +1,10 @@
+# flux/clusters/bc-workload/infrastructure/kustomization.yaml
+# Kustomize resource list for the infrastructure layer.
+# This lists the namespaces.yaml file and subdirectory resources.
+# The Flux Kustomization objects for each sub-layer are defined in flux-system/kustomizations.yaml.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespaces.yaml
