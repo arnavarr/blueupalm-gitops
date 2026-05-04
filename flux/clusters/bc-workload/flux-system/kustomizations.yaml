@@ -128,7 +128,7 @@ spec:
   timeout: 5m
 
 ---
-# ── 5. Messaging (NATS JetStream cluster 3 réplicas) ─────────────────────────
+# ── 5. Messaging (NATS JetStream cluster 3 réplicas) ─────────────────────────────
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -137,8 +137,11 @@ metadata:
 spec:
   interval: 10m
   dependsOn:
-    - name: security       # SPIRE SVIDs deben estar listos antes de NATS
-    - name: infrastructure # External Secrets debe poder inyectar NKeys
+    # NOTA: La dependencia de security (SPIRE) se elimina temporalmente para el bootstrap.
+    # Circular dependency: security (Keycloak) necesita PostgreSQL de data,
+    # data necesita messaging, messaging necesitaba security.
+    # SPIRE/NATS mTLS se configurará en fase posterior (post-bootstrap).
+    - name: infrastructure
   sourceRef:
     kind: GitRepository
     name: flux-system
@@ -148,7 +151,7 @@ spec:
   timeout: 10m
 
 ---
-# ── 6. Data (Rook-Ceph, PostgreSQL, Qdrant, Trino) ───────────────────────────
+# ── 6. Data (Rook-Ceph, PostgreSQL, Qdrant, Trino) ────────────────────────
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -157,14 +160,16 @@ metadata:
 spec:
   interval: 10m
   dependsOn:
-    - name: messaging      # Trino necesita NATS; Ceph necesita discos ready
+    # NOTA: La dependencia de messaging eliminada temporalmente para romper el ciclo:
+    # security (Keycloak) → PostgreSQL (data) → messaging → security
+    # PostgreSQL es una dependencia de Keycloak, no de NATS. Se separan en bootstrap.
     - name: infrastructure
   sourceRef:
     kind: GitRepository
     name: flux-system
   path: ./flux/clusters/bc-workload/data
   prune: true
-  wait: true
+  wait: false  # No bloquear si Rook-Ceph tarda (PVCs pendientes en primer boot)
   timeout: 30m    # Rook-Ceph inicialización es lenta (5-15 min)
 
 ---
