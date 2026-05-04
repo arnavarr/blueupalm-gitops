@@ -14,7 +14,7 @@
 #   - TokenRevocationSpike: > 10 revocaciones/min
 
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: prometheus-community
@@ -197,7 +197,7 @@ spec:
 
 ---
 # ── Loki: agregación de logs ──────────────────────────────────────────────────
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: grafana-charts

@@ -6,7 +6,7 @@
 # Password admin inyectada desde GCP Secret Manager via External Secrets.
 
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: bitnami

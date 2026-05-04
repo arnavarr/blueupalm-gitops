@@ -12,7 +12,7 @@
 # NUNCA expuesto: NATS :8222, OPA :8181, SPIRE, Trino, PostgreSQL, /verify endpoint
 
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: traefik

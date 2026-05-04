@@ -12,7 +12,7 @@
 # CephFS: volumen compartido para schemas FINOS CDM + EIAC V06
 
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: rook-ceph

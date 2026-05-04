@@ -15,7 +15,7 @@
 #   revoked_tokens → TTL 30d (CRL distribuida para tokens Biscuit)
 
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: nats

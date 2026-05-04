@@ -5,7 +5,7 @@
 # Usa Workload Identity — sin credenciales estáticas en el cluster.
 
 ---
-apiVersion: source.toolkit.fluxcd.io/v1beta2
+apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
   name: external-secrets
