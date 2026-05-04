@@ -7,7 +7,7 @@
 #   - Configuración de políticas OPA (persist en DB)
 #   - Base de datos de Keycloak (realm blueupalm)
 #
-# StorageClass premium-rwo (SSD): latencia baja para consultas transaccionales.
+# StorageClass ceph-block (SSD): latencia baja para consultas transaccionales.
 # Password inyectada desde GCP Secret Manager via External Secrets.
 # NUNCA expuesto vía Ingress — solo accesible desde namespaces autorizados.
 
@@ -47,7 +47,7 @@ spec:
     primary:
       persistence:
         enabled: true
-        storageClass: premium-rwo    # SSD para IOPS garantizadas (DORA SLA)
+        storageClass: ceph-block    # SSD para IOPS garantizadas (DORA SLA)
         size: 50Gi
 
       resources:

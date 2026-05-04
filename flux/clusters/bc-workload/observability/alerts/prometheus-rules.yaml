@@ -121,7 +121,7 @@ spec:
     loki:
       persistence:
         enabled: true
-        storageClassName: standard-rwo
+        storageClassName: ceph-block
         size: 50Gi
       config:
         limits_config:

@@ -56,7 +56,7 @@ spec:
       key: jwt
 
     persistence:
-      storageClass: premium-rwo
+      storageClass: ceph-block
       size: 2Gi
 
     resources:
@@ -97,7 +97,7 @@ spec:
       - binding: transport
 
     persistence:
-      storageClass: premium-rwo
+      storageClass: ceph-block
       size: 1Gi
 
 ---

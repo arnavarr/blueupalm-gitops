@@ -72,7 +72,7 @@ spec:
 
       persistence:
         enabled: true
-        storageClassName: standard-rwo
+        storageClassName: ceph-block
         size: 5Gi
 
     # ── Prometheus ────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ spec:
         storageSpec:
           volumeClaimTemplate:
             spec:
-              storageClassName: standard-rwo
+              storageClassName: ceph-block
               resources:
                 requests:
                   storage: 50Gi
@@ -99,7 +99,7 @@ spec:
         storage:
           volumeClaimTemplate:
             spec:
-              storageClassName: standard-rwo
+              storageClassName: ceph-block
               resources:
                 requests:
                   storage: 2Gi

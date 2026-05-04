@@ -1,9 +1,9 @@
 # flux/clusters/bc-workload/infrastructure/csi-gcp/storageclasses.yaml
 # BlueUPALM — StorageClasses GCP PD CSI Driver
 #
-# premium-rwo (SSD pd-ssd): Para workloads críticos (PostgreSQL, NATS, Qdrant)
+# ceph-block (SSD pd-ssd): Para workloads críticos (PostgreSQL, NATS, Qdrant)
 #   → IOPS garantizadas, latencia baja, cumplimiento SLA DORA
-# standard-rwo (HDD pd-standard): Para logs, spooling, archivado
+# ceph-block (HDD pd-standard): Para logs, spooling, archivado
 #   → Coste reducido para datos fríos (buffer DORA, local_spool.db)
 
 ---
@@ -11,7 +11,7 @@
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: premium-rwo
+  name: ceph-block
   annotations:
     storageclass.kubernetes.io/is-default-class: "false"
 provisioner: pd.csi.storage.gke.io
@@ -29,7 +29,7 @@ allowVolumeExpansion: true
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: standard-rwo
+  name: ceph-block
 provisioner: pd.csi.storage.gke.io
 parameters:
   type: pd-standard

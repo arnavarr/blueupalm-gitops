@@ -44,7 +44,7 @@ spec:
         api_key: ""    # API key gestionada via ExternalSecret (ver abajo)
 
     persistence:
-      storageClassName: premium-rwo    # SSD para búsquedas vectoriales (latencia crítica)
+      storageClassName: ceph-block    # SSD para búsquedas vectoriales (latencia crítica)
       size: 20Gi
 
     resources:

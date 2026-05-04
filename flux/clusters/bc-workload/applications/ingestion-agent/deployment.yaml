@@ -2,7 +2,7 @@
 # BlueUPALM — ingestion-agent (Python CDC Ingestor + DORA Classifier)
 #
 # Basado en /bc/config/settings.yaml y /bc/src/:
-#   - buffer.py: spool DORA en local_spool.db (PVC standard-rwo)
+#   - buffer.py: spool DORA en local_spool.db (PVC ceph-block)
 #   - ingestor.py: consume CDC via NATS, clasifica riesgo AML
 #   - dora_notifier.py: alerta cuando buffer supera 300s (warning) / 7200s (crítico)
 #   - incident_classifier.py: clasifica incidentes según DORA Art. 17
@@ -143,7 +143,7 @@ metadata:
   namespace: applications
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: standard-rwo    # HDD: datos de spooling temporal
+  storageClassName: ceph-block    # HDD: datos de spooling temporal
   resources:
     requests:
       storage: 10Gi

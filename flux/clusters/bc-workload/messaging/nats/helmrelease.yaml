@@ -55,7 +55,7 @@ spec:
           pvc:
             enabled: true
             size: 10Gi
-            storageClassName: premium-rwo    # SSD para NATS JetStream persistence
+            storageClassName: ceph-block    # SSD para NATS JetStream persistence
 
       # ── Configuración basada en /bc/config/nats.conf ───────────────────
       # Sin TLS nativo — OpenZiti provee el cifrado del overlay (main.rs:15-16)
