@@ -40,11 +40,15 @@ provider "google" {
 }
 
 # ── IP Estática para el Ingress Traefik ───────────────────────────────────────
-# Reservar antes que los módulos para poder usarla en DNS y outputs
-resource "google_compute_global_address" "ingress_ip" {
+# NOTA: Debe ser IP REGIONAL (no global) para que el GCP CCM pueda asignarla
+# a un Service de tipo LoadBalancer. Las IPs globales solo funcionan con
+# Google Cloud HTTP(S) LB (L7), no con el TCP passthrough (L4) del CCM.
+resource "google_compute_address" "ingress_ip" {
   name        = "blueupalm-ingress-ip"
+  region      = var.gcp_region
   project     = var.gcp_project_id
-  description = "IP estática para el LoadBalancer de Traefik (Ingress BlueUPALM)"
+  description = "IP estática regional para el LoadBalancer de Traefik (Ingress BlueUPALM)"
+  address_type = "EXTERNAL"
 }
 
 # ── Módulo VPC ────────────────────────────────────────────────────────────────

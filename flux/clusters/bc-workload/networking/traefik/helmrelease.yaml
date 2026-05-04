@@ -39,10 +39,16 @@ spec:
         namespace: networking
 
   values:
-    # Usar la IP estática reservada por Terraform
+    # Usar la IP estática regional reservada por Terraform (blueupalm-ingress-ip)
+    # La anotación networking.gke.io/load-balancer-ip instruye al GCP CCM a usar
+    # la IP reservada en lugar de asignar una efímera nueva.
+    # CRÍTICO: el nombre del recurso GCP debe coincidir con terraform/main.tf
     service:
       type: LoadBalancer
       annotations:
+        # GCP CCM: pedir la IP estática por nombre de recurso GCP
+        networking.gke.io/load-balancer-ip: "blueupalm-ingress-ip"
+        # Solo tráfico desde cualquier origen (sin restricción de origen)
         networking.gke.io/load-balancer-ip-source-ranges: "0.0.0.0/0"
 
     # TLS: usar el certificado wildcard emitido por cert-manager

@@ -44,12 +44,12 @@ output "secret_manager_secrets" {
 
 output "ingress_ip_name" {
   description = "Nombre del IP estático reservado para el Ingress de Traefik"
-  value       = google_compute_global_address.ingress_ip.name
+  value       = google_compute_address.ingress_ip.name
 }
 
 output "ingress_ip_address" {
   description = "Dirección IP estática del Ingress (configurar en DNS de Traefik)"
-  value       = google_compute_global_address.ingress_ip.address
+  value       = google_compute_address.ingress_ip.address
 }
 
 output "setup_instructions" {
@@ -59,12 +59,12 @@ output "setup_instructions" {
     BlueUPALM — Terraform Apply Completado
     ═══════════════════════════════════════════════════════
 
-    1. IP del Ingress: ${google_compute_global_address.ingress_ip.address}
+    1. IP del Ingress: ${google_compute_address.ingress_ip.address}
        → Añadir en GCP Cloud DNS zona ${var.domain_name}:
-         blueupalm  A  ${google_compute_global_address.ingress_ip.address}
-         auth       A  ${google_compute_global_address.ingress_ip.address}
-         hubble     A  ${google_compute_global_address.ingress_ip.address}
-         grafana    A  ${google_compute_global_address.ingress_ip.address}
+         blueupalm  A  ${google_compute_address.ingress_ip.address}
+         auth       A  ${google_compute_address.ingress_ip.address}
+         hubble     A  ${google_compute_address.ingress_ip.address}
+         grafana    A  ${google_compute_address.ingress_ip.address}
 
     2. Nameservers Cloud DNS: ${join(", ", module.cloud_dns.nameservers)}
        → Verificar que coinciden con los de eNom (ya delegados ✅)
