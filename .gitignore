@@ -23,3 +23,8 @@ kubeconfig-*
 *.key
 *.pkcs8
 *.seed
+
+# Archivos sensibles (nunca subir)
+bootstrap/capg-credentials.json
+terraform/*.tfstate*
+terraform/terraform.tfvars

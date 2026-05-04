@@ -108,3 +108,15 @@ metadata:
     app.kubernetes.io/managed-by: flux
     # Rook-Ceph requiere algunos privilegios elevados para gestionar discos
     pod-security.kubernetes.io/enforce: privileged
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: catalog
+  labels:
+    app.kubernetes.io/managed-by: flux
+    app.kubernetes.io/part-of: ztaclient
+    # nginx:1.27-alpine corre como root por defecto — baseline en lugar de restricted
+    pod-security.kubernetes.io/enforce: baseline
+    blueupalm.io/layer: catalog

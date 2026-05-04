@@ -232,3 +232,26 @@ spec:
   prune: true
   wait: false
   timeout: 5m
+
+---
+# ── 9. ZTA Catalog (nginx Dark Service — catalog.bc.internal) ─────────────────
+# Sirve el catálogo de servicios ZTA (catalog.yaml) como Dark Service en NetFoundry.
+# Accesible ÚNICAMENTE desde la overlay NetFoundry: http://catalog.bc.internal/catalog.yaml
+# El ZTA Client usa este endpoint post-enrollment para descubrir servicios disponibles.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: zta-catalog
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: namespaces     # Namespace 'catalog' debe existir
+    - name: infrastructure # cert-manager y CNI activos
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./gitops/apps/catalog
+  prune: true
+  wait: true
+  timeout: 5m
