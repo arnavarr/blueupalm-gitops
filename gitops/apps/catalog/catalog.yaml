@@ -1,0 +1,31 @@
+# Catálogo de servicios publicados en la overlay ZTA.
+# Este fichero es la fuente de verdad — editar = PR en infra → FluxCD reconcilia.
+# El nginx sirve este YAML como Dark Service catalog.bc.internal:80
+
+version: "1"
+services:
+  - id: svc-blueupalm-aml
+    displayName: "BlueUPALM AML Platform"
+    icon: shield
+    type: web
+    interceptHost: api.bc.internal
+    interceptPort: 8000
+    launchUrl: "http://api.bc.internal:8000"
+    description: "Plataforma de gestión de alertas AML y cumplimiento DORA"
+
+  - id: svc-grafana
+    displayName: "Grafana — Observabilidad"
+    icon: chart
+    type: web
+    interceptHost: grafana.bc.internal
+    interceptPort: 3000
+    launchUrl: "http://grafana.bc.internal:3000"
+    description: "Dashboards de métricas del cluster BlueUPALM"
+
+  - id: svc-nats
+    displayName: "NATS JetStream"
+    icon: database
+    type: nats
+    interceptHost: nats.bc.internal
+    interceptPort: 4222
+    description: "Bus de mensajería interno del cluster. Usar con cliente NATS CLI."

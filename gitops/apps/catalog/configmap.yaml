@@ -1,0 +1,53 @@
+---
+# ConfigMap con el catálogo de servicios.
+# Montado por el pod nginx como /usr/share/nginx/html/catalog.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zta-catalog-data
+  namespace: catalog
+  labels:
+    app.kubernetes.io/name: zta-catalog
+    app.kubernetes.io/part-of: ztaclient
+data:
+  catalog.yaml: |
+    version: "1"
+    services:
+      - id: svc-blueupalm-aml
+        displayName: "BlueUPALM AML Platform"
+        icon: shield
+        type: web
+        interceptHost: api.bc.internal
+        interceptPort: 8000
+        launchUrl: "http://api.bc.internal:8000"
+        description: "Plataforma de gestión de alertas AML y cumplimiento DORA"
+
+      - id: svc-grafana
+        displayName: "Grafana — Observabilidad"
+        icon: chart
+        type: web
+        interceptHost: grafana.bc.internal
+        interceptPort: 3000
+        launchUrl: "http://grafana.bc.internal:3000"
+        description: "Dashboards de métricas del cluster BlueUPALM"
+
+      - id: svc-nats
+        displayName: "NATS JetStream"
+        icon: database
+        type: nats
+        interceptHost: nats.bc.internal
+        interceptPort: 4222
+        description: "Bus de mensajería interno. Usar con cliente NATS CLI."
+  # nginx.conf minimal — sirve el YAML con Content-Type correcto
+  nginx.conf: |
+    server {
+      listen 80;
+      root /usr/share/nginx/html;
+      location /catalog.yaml {
+        add_header Content-Type "application/x-yaml";
+        add_header Access-Control-Allow-Origin "*";
+      }
+      location /health {
+        return 200 "ok";
+      }
+    }

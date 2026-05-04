@@ -91,10 +91,9 @@ spec:
 
     # ── Métricas Prometheus ───────────────────────────────────────────────
     metrics:
-      enabled: true
+      enabled: false   # Temporalmente deshabilitado — activar tras instalar kube-prometheus-stack
       serviceMonitor:
-        enabled: true
-        namespace: observability
+        enabled: false  # Requiere CRDs monitoring.coreos.com (Prometheus Operator)
 
 ---
 # ── ConfigMap: Realm blueupalm (configuración base) ──────────────────────────

@@ -107,6 +107,27 @@ spec:
   timeout: 10m
 
 ---
+# ── 4.5. Networking Routes (IngressRoutes — requieren Traefik CRDs) ───────────
+# Separado de networking para evitar dry-run failures antes de que Traefik instale sus CRDs.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: networking-routes
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: networking   # Traefik debe estar instalado (CRDs disponibles)
+    - name: security     # Keycloak y otros backends deben existir
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./flux/clusters/bc-workload/networking/routes
+  prune: true
+  wait: false    # No bloquear otras kustomizations si los backends no están ready
+  timeout: 5m
+
+---
 # ── 5. Messaging (NATS JetStream cluster 3 réplicas) ─────────────────────────
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -186,3 +207,23 @@ spec:
   prune: true
   wait: true
   timeout: 15m
+
+---
+# ── 8.5. Observability Alerts (PrometheusRules — requieren Prometheus Operator CRDs) ──
+# Separado de observability para evitar dry-run failures antes de instalar kube-prometheus-stack.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: observability-alerts
+  namespace: flux-system
+spec:
+  interval: 10m
+  dependsOn:
+    - name: observability  # kube-prometheus-stack debe estar instalado (CRDs disponibles)
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./flux/clusters/bc-workload/observability/alerts
+  prune: true
+  wait: false
+  timeout: 5m

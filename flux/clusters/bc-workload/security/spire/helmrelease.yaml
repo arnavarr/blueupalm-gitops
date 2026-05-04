@@ -58,39 +58,11 @@ spec:
 
       # Entradas de registro para cada microservicio
       # (También se pueden gestionar via SPIRE API)
+      # NOTA: controllerManager deshabilitado para bootstrap inicial.
+      # ClusterSPIFFEID CRDs requieren que el SPIRE chart esté completamente
+      # instalado antes de poder registrar identidades. Habilitar en segunda fase.
       controllerManager:
-        enabled: true
-        identities:
-          clusterSPIFFEIDs:
-            - name: edge-security
-              spiffeIDTemplate: "spiffe://blueupalm/edge-security"
-              podSelector:
-                matchLabels:
-                  app: edge-security
-              namespaceSelector:
-                matchLabels:
-                  kubernetes.io/metadata.name: applications
-              ttl: 1h
-
-            - name: ingestion-agent
-              spiffeIDTemplate: "spiffe://blueupalm/ingestion-agent"
-              podSelector:
-                matchLabels:
-                  app: ingestion-agent
-              namespaceSelector:
-                matchLabels:
-                  kubernetes.io/metadata.name: applications
-              ttl: 1h
-
-            - name: nats
-              spiffeIDTemplate: "spiffe://blueupalm/nats"
-              podSelector:
-                matchLabels:
-                  app: nats
-              namespaceSelector:
-                matchLabels:
-                  kubernetes.io/metadata.name: messaging
-              ttl: 1h
+        enabled: false
 
       persistence:
         enabled: true

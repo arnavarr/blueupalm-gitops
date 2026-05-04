@@ -115,5 +115,4 @@ spec:
 
     # ── ServiceMonitor Prometheus ─────────────────────────────────────────
     serviceMonitor:
-      enabled: true
-      namespace: observability
+      enabled: false  # Requiere CRDs monitoring.coreos.com — activar tras kube-prometheus-stack

@@ -33,6 +33,9 @@ metadata:
   namespace: security
 spec:
   interval: 10m
+  # SUSPENDIDO: BlueUPALM usa NetFoundry SaaS para la overlay Zero Trust.
+  # El controller self-hosted no es necesario. Activar solo si se migra a self-hosted.
+  suspend: true
   chart:
     spec:
       chart: ziti-controller
@@ -73,6 +76,8 @@ metadata:
   namespace: security
 spec:
   interval: 10m
+  # SUSPENDIDO: BlueUPALM usa NetFoundry SaaS — el edge router es gestionado externamente.
+  suspend: true
   chart:
     spec:
       chart: ziti-router

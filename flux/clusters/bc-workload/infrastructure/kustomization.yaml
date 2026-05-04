@@ -8,3 +8,4 @@ kind: Kustomization
 
 resources:
   - namespaces.yaml
+  - runtimeclasses.yaml

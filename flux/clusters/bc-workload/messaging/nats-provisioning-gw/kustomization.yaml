@@ -1,4 +1,5 @@
 # flux/clusters/bc-workload/messaging/nats-provisioning-gw/kustomization.yaml
+# El IngressRouteTCP ha sido movido a networking/routes/ porque requiere CRDs de Traefik.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -6,4 +7,3 @@ resources:
   - secret.yaml
   - deployment.yaml
   - service.yaml
-  - ingressroute-tcp.yaml

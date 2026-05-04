@@ -6,7 +6,6 @@ kind: Kustomization
 resources:
   # ── YAMLs sueltos en applications/ ─────────────────────────────────────────
   - image-automation.yaml
-  - runtimeclasses.yaml
 
   # ── Subdirectorios por servicio ─────────────────────────────────────────────
   - edge-security/
