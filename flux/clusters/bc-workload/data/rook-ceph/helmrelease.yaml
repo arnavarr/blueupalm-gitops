@@ -23,7 +23,7 @@ spec:
 
 ---
 # ── Rook-Ceph Operator ────────────────────────────────────────────────────────
-apiVersion: helm.toolkit.fluxcd.io/v2beta1
+apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: rook-ceph-operator
@@ -44,7 +44,7 @@ spec:
 
 ---
 # ── CephCluster: 3 OSDs en /dev/sdb de cada worker ───────────────────────────
-apiVersion: helm.toolkit.fluxcd.io/v2beta1
+apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: rook-ceph-cluster
