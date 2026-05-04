@@ -36,25 +36,21 @@ SERVICE_RESULT=$(curl -s -X POST "${NF_API}/services" \
   -d "{
     \"networkId\": \"${NETWORK_ID}\",
     \"name\": \"catalog.bc.internal\",
+    \"modelType\": \"TunnelerToEndpoint\",
+    \"encryptionRequired\": true,
     \"attributes\": [\"#catalog-service\"],
     \"model\": {
-      \"bindConfig\": {
-        \"allowedIdentities\": [\"#edge-router\"]
+      \"clientIngress\": {
+        \"host\": \"catalog.bc.internal\",
+        \"port\": 80
       },
-      \"edgeRouterPolicy\": {
-        \"semantic\": \"AnyOf\",
-        \"edgeRouterAttributes\": [\"#all\"]
-      },
-      \"serverConfig\": {
+      \"serverEgress\": {
         \"protocol\": \"tcp\",
         \"host\": \"${CATALOG_K8S_HOST}\",
         \"port\": ${CATALOG_K8S_PORT}
       },
-      \"clientConfig\": {
-        \"hostname\": \"catalog.bc.internal\",
-        \"port\": 80,
-        \"protocols\": [\"tcp\"]
-      }
+      \"edgeRouterAttributes\": [\"#all\"],
+      \"bindEndpointAttributes\": [\"#edge-router\"]
     }
   }")
 
