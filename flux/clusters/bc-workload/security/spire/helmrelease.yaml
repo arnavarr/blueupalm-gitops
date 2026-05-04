@@ -26,6 +26,19 @@ metadata:
   namespace: security
 spec:
   interval: 10m
+
+  # ── Timeout y reintentos Helm ────────────────────────────────────────────
+  # SPIRE tarda en el primer boot: cert-manager emite certs (~2 min) +
+  # ceph-block PVC bind (~3 min) + spire-server datastore init + agent SVID handshake.
+  install:
+    timeout: 20m
+    remediation:
+      retries: 3           # Reintentar hasta 3 veces si el install falla
+  upgrade:
+    timeout: 20m
+    remediation:
+      retries: 3
+      remediateLastFailure: true   # Desinstalar y reinstalar si el último upgrade falla
   chart:
     spec:
       chart: spire

@@ -76,6 +76,8 @@ metadata:
   namespace: flux-system
 spec:
   interval: 10m
+  # retryInterval: reintenta la sincronización en caso de error transitorio (PVC pendiente, pod crashloop)
+  retryInterval: 2m
   dependsOn:
     - name: infrastructure
     - name: cloud-controller-manager   # Workers deben estar inicializados antes de schedulear pods
@@ -85,7 +87,9 @@ spec:
   path: ./flux/clusters/bc-workload/security
   prune: true
   wait: true
-  timeout: 15m
+  # 30m: SPIRE necesita cert-manager + ceph-block PVC + handshake SVID inicial en cada nodo.
+  # Keycloak espera PostgreSQL (data layer) que tarda 5-10 min en el primer boot.
+  timeout: 30m
 
 ---
 # ── 4. Networking (Traefik Ingress + Middlewares) ─────────────────────────────
@@ -203,6 +207,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 10m
+  retryInterval: 3m
   dependsOn:
     - name: infrastructure
   sourceRef:
@@ -211,7 +216,8 @@ spec:
   path: ./flux/clusters/bc-workload/observability
   prune: true
   wait: true
-  timeout: 15m
+  # 25m: kube-prometheus-stack descarga múltiples imágenes grandes (Prometheus, Grafana, alertmanager)
+  timeout: 25m
 
 ---
 # ── 8.5. Observability Alerts (PrometheusRules — requieren Prometheus Operator CRDs) ──

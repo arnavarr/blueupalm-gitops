@@ -23,6 +23,19 @@ metadata:
   namespace: security
 spec:
   interval: 10m
+
+  # ── Timeout y reintentos Helm ────────────────────────────────────────────
+  # Keycloak espera PostgreSQL + ejecuta migraciones Liquibase al arrancar.
+  # Primera instalación: ~8-12 min. Sin timeout explícito Helm usa 5m (insuficiente).
+  install:
+    timeout: 15m
+    remediation:
+      retries: 3
+  upgrade:
+    timeout: 15m
+    remediation:
+      retries: 3
+      remediateLastFailure: true
   chart:
     spec:
       chart: keycloak
