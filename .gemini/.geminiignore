@@ -1,0 +1,29 @@
+# Build artifacts
+target/
+dist/
+build/
+*.egg-info/
+
+# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+
+# Git internals
+.git/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Heavy binary files
+*.mp4
+*.mov
+*.zip
+*.tar.gz
+*.pptx
